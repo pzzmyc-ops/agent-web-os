@@ -1,0 +1,11 @@
+# mafagent 依赖列表
+#
+# Agent Framework (agent_framework + agent_framework_openai) 已 vendored 为
+# 项目内部包,不需要 pip 安装。以下仅列框架的运行时依赖(普通 pip 包):
+#
+# 框架 core 依赖: typing-extensions>=4.15, pydantic>=2, python-dotenv>=1, opentelemetry-api>=1.39
+# 框架 openai 依赖: openai>=2.25
+# 上述依赖已随之前的 nextagent 安装一起就绪,此处仅作记录。
+#
+# 项目自身额外依赖:
+#   websockets  (WS 冒烟测试用,非运行时)

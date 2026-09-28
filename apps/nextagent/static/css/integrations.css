@@ -1,0 +1,94 @@
+
+.dingtalk-banner {
+  flex: none;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-bottom: 1px solid #bfdbfe;
+}
+
+
+.feishu-banner {
+  flex: none;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: #f5f3ff;
+  color: #5b21b6;
+  border-bottom: 1px solid #ddd6fe;
+}
+
+
+
+.feishu-webhook-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+
+
+.feishu-webhook-gate[hidden] {
+  display: none;
+}
+
+
+
+.feishu-webhook-card {
+  width: min(480px, calc(100% - 48px));
+  padding: 24px;
+  border: 1px solid #ddd6fe;
+  border-radius: 12px;
+  background: #fff;
+}
+
+
+
+.feishu-webhook-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: #5b21b6;
+}
+
+
+
+.feishu-webhook-card p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+
+
+.feishu-webhook-card input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+
+
+.feishu-webhook-error {
+  color: #b91c1c;
+}
+
+
+
+.feishu-webhook-card button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #5b21b6;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}

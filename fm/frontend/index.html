@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>文件管理器</title>
+  <link rel="stylesheet" href="/css/app.css?v=55" />
+  <link rel="stylesheet" href="/assets/kod/style/lib/font-icon/style.css" />
+</head>
+<body>
+  <div id="desktop">
+    <div id="desktop-icons"></div>
+    <div id="window-layer"></div>
+    <div id="taskbar">
+      <button type="button" id="start-btn" title="开始">
+        <span class="start-btn-ico"></span>
+      </button>
+      <div id="taskbar-apps"></div>
+      <div id="taskbar-clock"></div>
+    </div>
+    <div id="start-menu" class="hidden"></div>
+  </div>
+  <div id="ctx-menu" class="ctx-menu hidden"></div>
+  <div id="modal-mask" class="modal-mask hidden">
+    <div class="modal">
+      <div class="modal-title"></div>
+      <div class="modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-act="cancel">取消</button>
+        <button type="button" class="btn btn-primary" data-act="ok">确定</button>
+      </div>
+    </div>
+  </div>
+  <script src="/js/api.js?v=56"></script>
+  <script src="/js/loader.js?v=44"></script>
+  <script src="/js/wm.js?v=48"></script>
+  <script src="/js/kodApp.js?v=45"></script>
+  <script src="/js/desktop-os.js?v=50"></script>
+  <script src="/js/desktop-link.js?v=49"></script>
+  <script src="/js/transferHub.js?v=46"></script>
+  <script src="/js/apps/aceEditor.js?v=45"></script>
+  <script src="/js/apps/onlyoffice.js?v=51"></script>
+  <script src="/js/apps/imageViewer.js?v=47"></script>
+  <script src="/js/apps/audioPlayer.js?v=45"></script>
+  <script src="/js/apps/videoPlayer.js?v=46"></script>
+  <script src="/js/apps/htmlViewer.js?v=1"></script>
+  <script src="/js/apps/archiveViewer.js?v=3"></script>
+  <script src="/js/apps/transferManager.js?v=48"></script>
+  <script src="/js/apps/uploader.js?v=45"></script>
+  <script src="/js/apps/downloader.js?v=44"></script>
+  <script src="/js/apps/agent.js?v=49"></script>
+  <script src="/js/apps/hermes.js?v=53"></script>
+  <script src="/js/apps/deepseek.js?v=54"></script>
+  <script src="/js/apps/comfyui.js?v=4"></script>
+  <script src="/js/apps/remote.js?v=3"></script>
+  <script src="/js/apps/feishu-webhook.js?v=4"></script>
+  <script src="/js/explorer.js?v=52"></script>
+  <script src="/js/desktop.js?v=52"></script>
+  <script src="/js/startMenu.js?v=46"></script>
+  <script src="/js/app.js?v=57"></script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文件下载卡片 Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 24px; background: #f5f5f5; }
+    .row { display: flex; flex-wrap: wrap; gap: 24px; }
+    .media-image-area.has-file {
+      width: 460px; max-width: 100%; min-height: 120px;
+      background: #f7f7f8; border: 1px solid #e5e5e5; border-radius: 8px;
+    }
+    .media-image-content { display: flex; align-items: center; padding: 16px; }
+    .chat-file-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+    .chat-file-name { font-size: 14px; }
+    .chat-file-download-btn {
+      padding: 6px 14px; border: 1px solid #ddd; background: #fff;
+      border-radius: 6px; cursor: pointer; font-size: 13px;
+    }
+    .bad { color: #b91c1c; }
+    .ok { color: #15803d; }
+    h3 { margin: 0 0 8px; font-size: 15px; }
+  </style>
+</head>
+<body>
+  <h2>媒体卡片文件下载对比</h2>
+  <div class="row">
+    <div>
+      <h3 class="ok">A. createElement（正确）</h3>
+      <div class="media-image-area has-file"><div class="media-image-content" id="slotA"></div></div>
+    </div>
+    <div>
+      <h3 class="ok">B. innerHTML 原始 HTML（正确）</h3>
+      <div class="media-image-area has-file"><div class="media-image-content" id="slotB"></div></div>
+    </div>
+    <div>
+      <h3 class="bad">C. textContent 写入 HTML（线上错误形态）</h3>
+      <div class="media-image-area has-file"><div class="media-image-content" id="slotC"></div></div>
+    </div>
+  </div>
+  <p>若聊天里像 C，而不是 A/B，说明媒体区走了 textContent，不是缓存问题 alone。</p>
+  <script>
+    var html =
+      '<div class="chat-file-wrap" data-file-url="/workspace/read?path=images%2Fdemo.zip" data-file-name="demo.zip">' +
+      '<div class="chat-file-name">demo.zip</div>' +
+      '<button type="button" class="chat-file-download-btn">下载文件</button></div>';
+    function mountDom(el) {
+      while (el.firstChild) el.removeChild(el.firstChild);
+      var wrap = document.createElement("div");
+      wrap.className = "chat-file-wrap";
+      wrap.setAttribute("data-file-url", "/workspace/read?path=images%2Fdemo.zip");
+      wrap.setAttribute("data-file-name", "demo.zip");
+      var nameEl = document.createElement("div");
+      nameEl.className = "chat-file-name";
+      nameEl.textContent = "demo.zip";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chat-file-download-btn";
+      btn.textContent = "下载文件";
+      wrap.appendChild(nameEl);
+      wrap.appendChild(btn);
+      el.appendChild(wrap);
+    }
+    mountDom(document.getElementById("slotA"));
+    document.getElementById("slotB").innerHTML = html;
+    document.getElementById("slotC").textContent = html;
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest(".chat-file-download-btn");
+      if (!btn) return;
+      var wrap = btn.closest(".chat-file-wrap");
+      alert("下载: " + (wrap && wrap.getAttribute("data-file-name")));
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+网关与 Adapter 职责边界设计目标（最终版）
+
+============================================================
+一句话原则
+============================================================
+gateway 是一个纯框架，零对外调用。凡是"调用模型 / 媒体 / OSS / 转发 / 任何上游 API"的功能，
+一律是 adapter（节点），框架里一个都不许有。就像 ComfyUI：核心只负责编排、注册、执行调度，
+所有实际干活的都是节点。
+
+gateway 只做：记录 / 统计 / 写数据库、拿 adapter 写的说明文档用于展示、把请求分发给 adapter
+并原样返回结果。它不知道、也不关心任何模型或厂商怎么调用。
+
+
+============================================================
+一、gateway 框架的职责（且仅限于此，零对外调用）
+============================================================
+1. 契约：定义 adapter 基类与统一数据类型（请求/响应/用量/成本）。
+2. 注册与热加载：发现 adapter、reload、维护注册表（内置目录 + 工作区目录双来源）。
+3. 分发：按模型/能力把请求交给对应 adapter，拿回结果原样返回。
+4. 记录与统计：把每次调用的用量、成本、耗时、成败、请求/响应留痕写进数据库。
+5. 展示：从 adapter 收集说明文档（模型名、描述、参数、示例、能力位），用于列表与前端展示。
+
+框架里绝对不允许出现：
+- 任何 httpx/requests 对外请求、任何鉴权头、任何上游 URL、任何厂商 SDK 调用。
+- 任何特定厂商（如 Stargate）的代码。
+- 任何按模型写死的计费表、别名表、能力表。
+- OSS 上传、透明转发、媒体代理这类"对外调用"的实现（它们都是 adapter）。
+
+
+============================================================
+二、adapter（节点）的职责：一切对外调用与模型相关的事
+============================================================
+adapter 是自包含的节点，涵盖它这一件事的全部：调用、说明文档、计费。分三类：
+
+A. 对话模型 adapter（继承 ModelAdapter）
+   - chat_completions(body, meta) -> AdapterResult          调用（收束成 OpenAI /chat/completions）
+   - compute_cost(*, usage, response_json) -> Cost          计费
+   - 类属性 + catalog 方法                                   说明文档
+
+B. 媒体模型 adapter（继承 MediaModelAdapter）
+   - invoke_sync(meta, operation, input_data) -> MediaInvokeResult   调用（收束成统一媒体输出）
+   - compute_cost(*, result, operation) -> Cost                       计费
+   - 类属性 + catalog 方法                                            说明文档
+   - 媒体产物若是二进制，adapter 自己负责产出可访问 URL（调用 OSS 服务节点），
+     框架不做任何上传，只把 adapter 给出的 URL 归一化展示。
+
+C. 服务 adapter / 节点（对外调用但不是"模型"）
+   - 例如 OSS（把二进制传到对象存储换 URL）、透明转发、媒体代理。
+   - 它们也是对外调用，所以属于 adapter 侧，供其它 adapter 复用；框架不 import、不依赖。
+
+
+============================================================
+三、厂商无关（硬性约束）
+============================================================
+- 厂商只是 adapter 的实现细节。Stargate 只是众多厂商之一，不是框架的一部分。
+- 厂商专属代码（调用/转发/鉴权/产品码/OSS）全部在 adapter 侧：自包含在 adapter 里，
+  或作为"厂商包"放在 adapter 那一侧，由需要它的 adapter 复用。
+- 框架代码不得 import 任何厂商包或任何对外调用模块。
+
+
+============================================================
+四、可测判据（是否真的解耦）
+============================================================
+1. 框架零对外调用：在 gateway 框架代码里搜不到任何 httpx/上游 URL/鉴权/OSS/转发调用。
+2. 删除任一厂商（如 Stargate）的全部代码后，gateway 仍能启动，仍能服务其它通用 adapter。
+3. 新增一个模型/服务，只需新增/修改一个 adapter 文件，不动 gateway 任何代码。
+4. 同一个 adapter 文件，放工作区 adapters/ 或内置 gateway/adapters/ 都能运行
+   （只用绝对导入 gateway.*，禁止相对导入 from .xxx）。
+5. adapter 写好 -> 调 /api/llm-proxy/v1/admin/reload -> 立即可选、可调用、可计费、可展示，无需重启。
+
+
+============================================================
+五、框架 vs adapter 的文件归属（重写目标）
+============================================================
+留在框架（gateway，纯编排，零对外调用）：
+- core/types、core/dispatcher、core/accounting、core/media_accounting、core/openai_chat（纯格式转换）、core/metadata、core/media_types
+- adapters/base、adapters/media_base、adapters/catalog_types、adapters/registry、adapters/media_registry、adapters/_external
+- routes/openai、routes/media（只收请求、交给 adapter、返回结果）
+- media_unified（只归一化 adapter 给出的 URL/数据，不上传、不 import OSS）
+- catalog_builder、bootstrap（通用装配 + 可选 vendor 装载）、http_client（仅提供客户端工具，自身不发起业务调用）
+
+迁到 adapter 侧 / 厂商包（对外调用，框架不再 import）：
+- oss、media_oss（OSS 服务节点）
+- stargate_openai、stargate_openai_proxy、stargate_media_common、stargate_media_products、stargate_media_upstream、stargate_forward、media_proxy、routes/stargate（Stargate 厂商包）
+- 现有 stargate 系对话/媒体 adapter（本就是 adapter，复用上面的厂商包）
+
+

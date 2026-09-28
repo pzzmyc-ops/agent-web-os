@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+# mafagent .gitignore
+#
+# 原则:代码进版本控制,运行时状态和密钥不进。
+# vendor/ 是刻意提交的 —— 它是 vendored 的 agent_framework,提交后回滚点才完整。
+# ---------------------------------------------------------------------------
+
+# Python 字节码
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 密钥 —— config.json 里有真实 api_key 与 onlyoffice_jwt。
+# 换机器/新同事需要照 apps/nextagent/config.py 顶部的说明自己建一份。
+/config.json
+/_lark_auth.json
+/_lark_auth_url.txt
+
+# 运行时数据:用户工作区(14M)、进程 checkpoint、SQLite 会话库。
+# 这些是运行产物,不是代码 —— 提交进来会让每次对话都变成一个 diff。
+#
+# 有三处独立的 data/,别只写根目录那一个:
+#   /data/                    工作区 + 会话库(config.json 的 data_dir / fm_root)
+#   /apps/nextagent/data/     hermes home —— processes.json、terminal 快照缓存
+#                             (maf_tools/_constants.get_hermes_home() 指到这)
+#   /gateway/data/            网关用量库 llm_usage.db
+/data/*
+!/data/workspace/
+/data/workspace/*
+!/data/workspace/skills/
+/data/workspace/skills/.hub/
+/data/workspace/skills/campaign-metric-query/
+/data/workspace/skills/data-health-check/
+/data/workspace/skills/manastudio-beat-fail/
+/data/workspace/skills/manastudio-report/
+/data/workspace/skills/stargate-report/
+/data/workspace/skills/mana-asset-map/
+/data/workspace/skills/mana-episode-map/
+/data/workspace/skills/nextagent-issue-debug/
+/data/workspace/skills/query-debug/
+/data/workspace/skills/seedance-feedback-report/
+/data/workspace/backup/
+/apps/codex/
+/apps/nextagent/temp/
+*.bak
+*.prev
+/apps/nextagent/data/
+/apps/hermes-agent/
+/apps/hermes-webui/
+/apps/comfyui/
+/apps/deepseek/
+/vendor/guacamole/guacamole-lite/node_modules/
+/gateway/data/
+/gateway_standalone/
+/python/
+
+# 虚拟环境与本地环境变量
+.venv/
+venv/
+.env
+*.env
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+*.swp
+
+# 本地 Claude Code 设置(settings.local.json 按约定是个人的,不共享)
+.claude/settings.local.json
+
+# Windows
+Thumbs.db
+Desktop.ini
+*.lnk
+
+*.log
+/temp${name}.json

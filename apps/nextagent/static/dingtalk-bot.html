@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>钉钉机器人agent</title>
+  <link rel="stylesheet" href="/static/css/dingtalk-bot.css?v=6">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>钉钉机器人agent</h1>
+        <p class="sub">后台常驻监听所有@；此窗口只看状态和日志</p>
+      </div>
+      <div class="actions">
+        <label class="model-label">模型
+          <select id="model"></select>
+        </label>
+        <span id="badge" class="badge">未启动</span>
+        <button type="button" id="btnStop" class="stop-btn" disabled title="停止">停止</button>
+      </div>
+    </header>
+    <p id="error" class="error" hidden></p>
+    <section>
+      <h2>已绑定的群</h2>
+      <table>
+        <thead>
+          <tr><th>群名</th><th>对话</th></tr>
+        </thead>
+        <tbody id="binds"></tbody>
+      </table>
+    </section>
+    <section>
+      <h2>运行日志</h2>
+      <pre id="logs"></pre>
+    </section>
+  </div>
+  <script src="/static/js/dingtalk-bot.js?v=6"></script>
+</body>
+</html>

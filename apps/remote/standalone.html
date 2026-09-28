@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>远程桌面</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; color: #eee; font-family: "Segoe UI", sans-serif; }
+    #bar {
+      position: absolute; left: 0; right: 0; top: 0; height: 28px; line-height: 28px;
+      padding: 0 10px; background: rgba(0,0,0,0.55); font-size: 12px; z-index: 2; pointer-events: none;
+    }
+    #display { position: absolute; inset: 0; overflow: hidden; background: #111; cursor: none; }
+    #display * { cursor: none; }
+    #panel {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: 400px; max-height: 90vh; overflow: auto; background: #1e1e1e; border: 1px solid #333;
+      padding: 24px 28px; box-sizing: border-box; z-index: 3; cursor: default;
+    }
+    select {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #444;
+      background: #2a2a2a; color: #eee; font-size: 14px;
+    }
+    .checks { margin-top: 12px; }
+    .checks label { display: flex; align-items: center; gap: 8px; margin: 8px 0; color: #ddd; }
+    .checks input { width: auto; }
+    #panel, #panel * { cursor: default; }
+    #panel h1 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
+    label { display: block; margin: 10px 0 4px; font-size: 13px; color: #bbb; }
+    input {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #444;
+      background: #2a2a2a; color: #eee; font-size: 14px;
+    }
+    button {
+      margin-top: 18px; width: 100%; padding: 10px; border: 0; background: #2b6cb0;
+      color: #fff; font-size: 14px; cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #err { margin-top: 12px; color: #f66; font-size: 13px; min-height: 1.2em; }
+    #panel.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="bar">未连接</div>
+  <div id="display"></div>
+  <form id="panel">
+    <h1>连接到远程桌面</h1>
+    <label for="hostname">地址</label>
+    <input id="hostname" name="hostname" value="192.168.0.142" autocomplete="off" required>
+    <label for="port">端口</label>
+    <input id="port" name="port" value="3389" inputmode="numeric" required>
+    <label for="username">用户名</label>
+    <input id="username" name="username" autocomplete="username" required>
+    <label for="password">密码</label>
+    <input id="password" name="password" type="password" autocomplete="current-password">
+    <label for="domain">域（可空）</label>
+    <input id="domain" name="domain" autocomplete="off">
+    <label for="quality">连接质量</label>
+    <select id="quality" name="quality">
+      <option value="low">流畅</option>
+      <option value="balanced" selected>均衡</option>
+      <option value="high">高清</option>
+    </select>
+    <label for="colorDepth">色深</label>
+    <select id="colorDepth" name="colorDepth">
+      <option value="8">8 位</option>
+      <option value="16" selected>16 位</option>
+      <option value="24">24 位</option>
+    </select>
+    <div class="checks">
+      <label><input id="wallpaper" type="checkbox">桌面壁纸</label>
+      <label><input id="theming" type="checkbox">窗口主题</label>
+      <label><input id="fontSmoothing" type="checkbox">字体平滑</label>
+      <label><input id="composition" type="checkbox">桌面特效</label>
+      <label><input id="audio" type="checkbox" checked>声音</label>
+      <label><input id="lossless" type="checkbox">无损画面</label>
+    </div>
+    <button id="go" type="submit">连接</button>
+    <div id="err"></div>
+  </form>
+  <script src="all.min.js"></script>
+  <script>
+    window.ImageDecoder = undefined;
+    const panel = document.getElementById("panel");
+    const err = document.getElementById("err");
+    const go = document.getElementById("go");
+    const bar = document.getElementById("bar");
+    const display = document.getElementById("display");
+    let client = null;
+    let keyboard = null;
+    let imgCount = 0;
+    let syncCount = 0;
+    let lastW = 0;
+    let lastH = 0;
+    let resizeTimer = 0;
+    const STORE = "mafagent.remote.last";
+    const STORE_FIELDS = ["hostname", "port", "username", "password", "domain", "quality", "colorDepth", "wallpaper", "theming", "fontSmoothing", "composition", "audio", "lossless"];
+
+    function showError(text) {
+      err.textContent = text;
+      bar.textContent = text;
+    }
+
+    function viewport() {
+      const box = display.getBoundingClientRect();
+      return {
+        width: Math.max(1, Math.floor(box.width)),
+        height: Math.max(1, Math.floor(box.height)),
+      };
+    }
+
+    function detach() {
+      if (keyboard) {
+        keyboard.onkeydown = null;
+        keyboard.onkeyup = null;
+        keyboard = null;
+      }
+      if (client) {
+        client.disconnect();
+        client = null;
+      }
+      display.innerHTML = "";
+      lastW = 0;
+      lastH = 0;
+      panel.classList.remove("hidden");
+      go.disabled = false;
+    }
+
+    function loadLast() {
+      const raw = localStorage.getItem(STORE);
+      if (raw === null) {
+        return;
+      }
+      const last = JSON.parse(raw);
+      STORE_FIELDS.forEach(function (key) {
+        if (!(key in last)) {
+          throw new Error("上次连接参数缺少 " + key);
+        }
+        const el = document.getElementById(key);
+        if (el.type === "checkbox") {
+          el.checked = !!last[key];
+        } else {
+          el.value = last[key] == null ? "" : String(last[key]);
+        }
+      });
+    }
+
+    function saveLast(payload) {
+      localStorage.setItem(STORE, JSON.stringify(payload));
+    }
+
+    function shutdown() {
+      detach();
+      return fetch("disconnect", { method: "POST", keepalive: true });
+    }
+
+    function fit() {
+      if (!client) return;
+      const w = client.getDisplay().getWidth();
+      const h = client.getDisplay().getHeight();
+      if (!w || !h) return;
+      const v = viewport();
+      const s = Math.min(v.width / w, v.height / h);
+      if (s > 0 && isFinite(s)) client.getDisplay().scale(s);
+    }
+
+    function applySize() {
+      if (!client) return;
+      if (document.visibilityState !== "visible") return;
+      const v = viewport();
+      if (v.width < 2 || v.height < 2) return;
+      if (v.width === lastW && v.height === lastH) {
+        fit();
+        return;
+      }
+      lastW = v.width;
+      lastH = v.height;
+      client.sendSize(v.width, v.height);
+      fit();
+    }
+
+    const PRESETS = {
+      low: { colorDepth: "16", wallpaper: false, theming: false, fontSmoothing: false, composition: false, audio: false, lossless: false },
+      balanced: { colorDepth: "16", wallpaper: false, theming: false, fontSmoothing: false, composition: false, audio: true, lossless: false },
+      high: { colorDepth: "24", wallpaper: true, theming: true, fontSmoothing: true, composition: true, audio: true, lossless: true },
+    };
+
+    function applyPreset() {
+      const p = PRESETS[document.getElementById("quality").value];
+      if (!p) throw new Error("连接质量无效");
+      document.getElementById("colorDepth").value = p.colorDepth;
+      document.getElementById("wallpaper").checked = p.wallpaper;
+      document.getElementById("theming").checked = p.theming;
+      document.getElementById("fontSmoothing").checked = p.fontSmoothing;
+      document.getElementById("composition").checked = p.composition;
+      document.getElementById("audio").checked = p.audio;
+      document.getElementById("lossless").checked = p.lossless;
+    }
+
+    document.getElementById("quality").addEventListener("change", applyPreset);
+
+    function scheduleResize() {
+      if (resizeTimer) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(applySize, 160);
+    }
+
+    panel.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      showError("");
+      imgCount = 0;
+      syncCount = 0;
+      detach();
+      go.disabled = true;
+      const payload = {
+        hostname: document.getElementById("hostname").value,
+        port: document.getElementById("port").value,
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+        domain: document.getElementById("domain").value,
+        quality: document.getElementById("quality").value,
+        colorDepth: document.getElementById("colorDepth").value,
+        wallpaper: document.getElementById("wallpaper").checked,
+        theming: document.getElementById("theming").checked,
+        fontSmoothing: document.getElementById("fontSmoothing").checked,
+        composition: document.getElementById("composition").checked,
+        audio: document.getElementById("audio").checked,
+        lossless: document.getElementById("lossless").checked,
+      };
+      try {
+        saveLast(payload);
+        const res = await fetch("connect", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || ("连接参数失败 HTTP " + res.status));
+        }
+        if (!data.token) {
+          throw new Error("没有返回连接令牌");
+        }
+        const v = viewport();
+        lastW = v.width;
+        lastH = v.height;
+        const tunnel = new Guacamole.WebSocketTunnel("ws");
+        client = new Guacamole.Client(tunnel);
+        const inner = tunnel.oninstruction;
+        tunnel.oninstruction = function (op, params) {
+          if (op === "img") imgCount += 1;
+          if (op === "sync") syncCount += 1;
+          if (inner) inner(op, params);
+          const dw = client.getDisplay().getWidth();
+          const dh = client.getDisplay().getHeight();
+          bar.textContent = "画面 " + dw + "x" + dh + "  图 " + imgCount + "  同步 " + syncCount;
+          fit();
+        };
+        client.onerror = function (status) {
+          showError(status && status.message ? status.message : "远程桌面出错");
+          detach();
+        };
+        const surface = client.getDisplay().getElement();
+        surface.style.cursor = "none";
+        display.appendChild(surface);
+        const mouse = new Guacamole.Mouse(surface);
+        mouse.onEach(["mousedown", "mousemove", "mouseup"], function (ev) {
+          client.sendMouseState(ev.state, true);
+        });
+        keyboard = new Guacamole.Keyboard(document);
+        keyboard.onkeydown = function (keysym) {
+          client.sendKeyEvent(1, keysym);
+        };
+        keyboard.onkeyup = function (keysym) {
+          client.sendKeyEvent(0, keysym);
+        };
+        const q = [
+          "token=" + encodeURIComponent(data.token),
+          "width=" + String(v.width),
+          "height=" + String(v.height),
+        ].join("&");
+        client.connect(q);
+        panel.classList.add("hidden");
+        bar.textContent = "已连接，等待画面";
+      } catch (ex) {
+        showError(String(ex.message || ex));
+        detach();
+      }
+    });
+
+    window.addEventListener("resize", scheduleResize);
+    if (window.ResizeObserver) {
+      new ResizeObserver(scheduleResize).observe(display);
+    }
+    window.addEventListener("pagehide", function () {
+      shutdown();
+    });
+    window.addEventListener("beforeunload", function () {
+      shutdown();
+    });
+    window.addEventListener("message", function (e) {
+      if (e.origin !== window.location.origin) {
+        return;
+      }
+      if (!e.data || e.data.type !== "remote-disconnect") {
+        return;
+      }
+      shutdown();
+    });
+    loadLast();
+  </script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>远程桌面</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #111; color: #eee; font-family: "Segoe UI", sans-serif; }
+    #display { width: 100%; height: 100%; overflow: hidden; }
+    #panel {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: 360px; background: #1e1e1e; border: 1px solid #333; padding: 24px 28px;
+      box-sizing: border-box;
+    }
+    #panel h1 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
+    label { display: block; margin: 10px 0 4px; font-size: 13px; color: #bbb; }
+    input {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #444;
+      background: #2a2a2a; color: #eee; font-size: 14px;
+    }
+    button {
+      margin-top: 18px; width: 100%; padding: 10px; border: 0; background: #2b6cb0;
+      color: #fff; font-size: 14px; cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #err { margin-top: 12px; color: #f66; font-size: 13px; min-height: 1.2em; }
+    #panel.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="display"></div>
+  <form id="panel">
+    <h1>连接到远程桌面</h1>
+    <label for="hostname">地址</label>
+    <input id="hostname" name="hostname" value="host.docker.internal" autocomplete="off" required>
+    <label for="port">端口</label>
+    <input id="port" name="port" value="3389" inputmode="numeric" required>
+    <label for="username">用户名</label>
+    <input id="username" name="username" autocomplete="username" required>
+    <label for="password">密码</label>
+    <input id="password" name="password" type="password" autocomplete="current-password">
+    <label for="domain">域（可空）</label>
+    <input id="domain" name="domain" autocomplete="off">
+    <button id="go" type="submit">连接</button>
+    <div id="err"></div>
+  </form>
+  <script src="all.min.js"></script>
+  <script>
+    window.ImageDecoder = undefined;
+    const panel = document.getElementById("panel");
+    const err = document.getElementById("err");
+    const go = document.getElementById("go");
+    const display = document.getElementById("display");
+    let client = null;
+    let keyboard = null;
+
+    function showError(text) {
+      err.textContent = text;
+    }
+
+    function detach() {
+      if (keyboard) {
+        keyboard.onkeydown = null;
+        keyboard.onkeyup = null;
+        keyboard = null;
+      }
+      if (client) {
+        client.disconnect();
+        client = null;
+      }
+      display.innerHTML = "";
+      panel.classList.remove("hidden");
+      go.disabled = false;
+    }
+
+    panel.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      showError("");
+      go.disabled = true;
+      const payload = {
+        hostname: document.getElementById("hostname").value,
+        port: document.getElementById("port").value,
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+        domain: document.getElementById("domain").value,
+      };
+      try {
+        const res = await fetch("connect", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || ("连接参数失败 HTTP " + res.status));
+        }
+        if (!data.token) {
+          throw new Error("没有返回连接令牌");
+        }
+        const tunnel = new Guacamole.WebSocketTunnel("ws");
+        client = new Guacamole.Client(tunnel);
+        client.onerror = function (status) {
+          showError(status && status.message ? status.message : "远程桌面出错");
+          detach();
+        };
+        display.appendChild(client.getDisplay().getElement());
+        const mouse = new Guacamole.Mouse(client.getDisplay().getElement());
+        mouse.onEach(["mousedown", "mousemove", "mouseup"], function (ev) {
+          client.sendMouseState(ev.state, true);
+        });
+        keyboard = new Guacamole.Keyboard(document);
+        keyboard.onkeydown = function (keysym) {
+          client.sendKeyEvent(1, keysym);
+        };
+        keyboard.onkeyup = function (keysym) {
+          client.sendKeyEvent(0, keysym);
+        };
+        const q = [
+          "token=" + encodeURIComponent(data.token),
+          "width=" + String(window.innerWidth),
+          "height=" + String(window.innerHeight),
+        ].join("&");
+        client.connect(q);
+        panel.classList.add("hidden");
+      } catch (ex) {
+        showError(String(ex.message || ex));
+        detach();
+      }
+    });
+
+    window.addEventListener("beforeunload", function () {
+      if (client) {
+        client.disconnect();
+      }
+    });
+  </script>
+</body>
+</html>

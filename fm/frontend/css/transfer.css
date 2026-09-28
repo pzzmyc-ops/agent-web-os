@@ -1,0 +1,120 @@
+.file-upload-box{height:100%;padding:8px;overflow:hidden;display:flex;flex-direction:column;background:#fff}
+.file-upload-box .btns{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px 10px;flex-shrink:0}
+.file-upload-box .upload-btns{display:flex;gap:8px}
+.file-upload-box .upload-select-file,.file-upload-box .upload-select-folder{
+  cursor:pointer;color:#fff;border:none;height:28px;line-height:28px;border-radius:3px;padding:0 14px;font-size:12px;
+  background-image:linear-gradient(top,#84C8FF,#6091FF);background:linear-gradient(180deg,#84C8FF,#6091FF);
+}
+.file-upload-box .upload-select-file:hover,.file-upload-box .upload-select-folder:hover{filter:brightness(1.05)}
+.file-upload-box .upload-box-tips{display:flex;gap:6px}
+.file-upload-box .upload-box-tips button{
+  height:28px;padding:0 10px;border:1px solid #d0d5dd;border-radius:3px;background:#fff;cursor:pointer;font-size:12px;color:#444;
+}
+.file-upload-box .upload-box-tips button:hover{background:#f3f7ff;border-color:#91caff}
+.file-upload-box .upload-box-tips button.is-stop{color:#e81123;border-color:#f3a0a7}
+.uploader-content{
+  flex:1;min-height:0;border:1px solid #e5e7eb;border-radius:4px;position:relative;overflow:auto;
+  background:#fafbfc url("/assets/kod/images/common/drop_upload.png") center 70% / 160px no-repeat;
+}
+.uploader-content.has-items{background-image:none;background-color:#fff}
+.uploader-list{padding:4px 0}
+.uploader-list .item{padding:8px 12px 6px;border-bottom:1px solid #f0f1f3;position:relative}
+.uploader-list .item:hover{background:#f7faff}
+.uploader-list .item .info{display:flex;align-items:center;gap:8px;min-height:24px}
+.uploader-list .item .title{flex:1;min-width:0;display:flex;align-items:center;gap:8px;font-size:13px;color:#333}
+.uploader-list .item .title .fico{width:18px;height:18px;background:center/contain no-repeat;flex-shrink:0}
+.uploader-list .item .title-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uploader-list .item .size{width:72px;text-align:right;color:#888;font-size:12px;flex-shrink:0}
+.uploader-list .item .state{width:88px;text-align:right;font-size:12px;color:#1677ff;flex-shrink:0}
+.uploader-list .item.success .state{color:#52c41a}
+.uploader-list .item.error .state{color:#e81123}
+.uploader-list .item.is-stoped .state{color:#fa8c16}
+.uploader-list .item .actions{display:flex;gap:4px;flex-shrink:0}
+.uploader-list .item .actions button{
+  border:0;background:transparent;cursor:pointer;color:#666;width:24px;height:24px;border-radius:4px;font-size:14px;
+}
+.uploader-list .item .actions button:hover{background:#e8f3ff;color:#1677ff}
+.uploader-list .item .progress{
+  margin-top:6px;height:4px;background:#eef1f5;border-radius:4px;overflow:hidden;
+}
+.uploader-list .item .progress-bar{
+  height:100%;width:0;background:linear-gradient(90deg,#84C8FF,#1677ff);transition:width .15s linear;
+}
+.uploader-list .item.success .progress-bar{background:#52c41a}
+.uploader-list .item.error .progress-bar{background:#e81123;width:100%!important}
+.transfer-notify{
+  position:fixed;right:16px;bottom:52px;width:300px;z-index:35000;
+  background:rgba(20,28,40,.92);color:#fff;border-radius:8px;padding:12px 14px;
+  box-shadow:0 8px 24px rgba(0,0,0,.25);display:none;
+}
+.transfer-notify.show{display:block}
+.transfer-notify .tn-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:8px}
+.transfer-notify .tn-title i{font-size:18px}
+.transfer-notify .tn-line{font-size:12px;opacity:.9;margin-bottom:4px}
+.transfer-notify .tn-bar{height:4px;background:rgba(255,255,255,.15);border-radius:4px;overflow:hidden;margin-top:8px}
+.transfer-notify .tn-bar>i{display:block;height:100%;width:0;background:#4096ff}
+.download-panel{height:100%;display:flex;flex-direction:column;background:#fff}
+.download-panel .dp-head{padding:10px 12px;border-bottom:1px solid #eee;font-size:13px;color:#555}
+.download-panel .dp-list{flex:1;overflow:auto;padding:4px 0}
+.download-panel .dp-item{padding:10px 12px;border-bottom:1px solid #f0f1f3;display:flex;align-items:center;gap:10px}
+.download-panel .dp-item .fico{width:20px;height:20px;background:center/contain no-repeat}
+.download-panel .dp-item .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.download-panel .dp-item .state{font-size:12px;color:#1677ff}
+.download-panel .dp-item.success .state{color:#52c41a}
+.download-panel .dp-item.error .state{color:#e81123}
+.transfer-manager{height:100%;display:flex;flex-direction:column;background:#fff}
+.transfer-manager .tm-toolbar{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid #eee;flex-shrink:0;
+}
+.transfer-manager .tm-left,.transfer-manager .tm-right{display:flex;gap:8px}
+.transfer-manager .tm-btn{
+  height:28px;padding:0 12px;border:1px solid #d0d5dd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;color:#444;
+}
+.transfer-manager .tm-btn:hover{background:#f3f7ff;border-color:#91caff}
+.transfer-manager .tm-btn.primary{
+  color:#fff;border:none;
+  background:linear-gradient(180deg,#84C8FF,#6091FF);
+}
+.transfer-manager .tm-tabs{
+  display:flex;gap:4px;padding:8px 12px 0;flex-shrink:0;
+}
+.transfer-manager .tm-tab{
+  height:28px;padding:0 12px;border:0;border-radius:4px 4px 0 0;background:transparent;cursor:pointer;color:#666;font-size:12px;
+}
+.transfer-manager .tm-tab.active{background:#f5f8fc;color:#1677ff;font-weight:600}
+.transfer-manager .tm-drop{
+  flex:1;min-height:0;margin:0 12px 12px;border:1px solid #e5e7eb;border-radius:0 4px 4px 4px;overflow:auto;
+  background:#fafbfc url("/assets/kod/images/common/drop_upload.png") center 60% / 140px no-repeat;
+}
+.transfer-manager .tm-drop.dragover{border-color:#1677ff;background-color:#f0f7ff}
+.transfer-manager .tm-drop.has-items{background-image:none;background-color:#fff}
+.transfer-manager .tm-list{padding:4px 0}
+.transfer-manager .tm-item{padding:8px 12px 6px;border-bottom:1px solid #f0f1f3}
+.transfer-manager .tm-item:hover{background:#f7faff}
+.transfer-manager .tm-info{display:flex;align-items:center;gap:8px;min-height:24px}
+.transfer-manager .tm-kind{
+  flex-shrink:0;font-size:11px;padding:1px 6px;border-radius:3px;background:#eef3ff;color:#1677ff;
+}
+.transfer-manager .tm-item[data-kind="download"] .tm-kind,
+.transfer-manager .tm-item .tm-kind:empty{display:inline}
+.transfer-manager .tm-item .fico{width:18px;height:18px;background:center/contain no-repeat;flex-shrink:0}
+.transfer-manager .tm-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:#333}
+.transfer-manager .tm-client{width:100px;flex-shrink:0;font-size:11px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.transfer-manager .tm-size{width:110px;text-align:right;color:#888;font-size:12px;flex-shrink:0}
+.transfer-manager .tm-speed{width:72px;text-align:right;color:#52c41a;font-size:12px;flex-shrink:0}
+.transfer-manager .tm-state{width:110px;text-align:right;font-size:12px;color:#1677ff;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.transfer-manager .tm-item.success .tm-state{color:#52c41a}
+.transfer-manager .tm-item.packing .tm-state,.transfer-manager .tm-item.ready .tm-state{color:#fa8c16}
+.transfer-manager .tm-item.error .tm-state,.transfer-manager .tm-item.cancelled .tm-state{color:#e81123}
+.transfer-manager .tm-item.packing .tm-progress>i,.transfer-manager .tm-item.ready .tm-progress>i{background:linear-gradient(90deg,#ffc53d,#fa8c16)}
+.transfer-manager .tm-cancel,.transfer-manager .tm-retry{
+  border:0;background:transparent;cursor:pointer;color:#666;width:24px;height:24px;border-radius:4px;
+}
+.transfer-manager .tm-cancel:hover,.transfer-manager .tm-retry:hover{background:#e8f3ff;color:#1677ff}
+.transfer-manager .tm-progress{margin-top:6px;height:4px;background:#eef1f5;border-radius:4px;overflow:hidden}
+.transfer-manager .tm-progress>i{display:block;height:100%;width:0;background:linear-gradient(90deg,#84C8FF,#1677ff);transition:width .12s linear}
+.transfer-manager .tm-item.success .tm-progress>i{background:#52c41a;width:100%}
+.transfer-manager .tm-item.error .tm-progress>i,.transfer-manager .tm-item.cancelled .tm-progress>i{background:#e81123;width:100%}
+.transfer-notify{cursor:pointer}
+.win.transfer-manager-dialog .win-title{display:flex;align-items:center;gap:6px}
+.win.transfer-manager-dialog .win-title .path-ico{width:16px;height:16px;background:center/contain no-repeat;flex-shrink:0}
