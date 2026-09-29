@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-#这是一个安装脚本，用于安装mafagent和相关依赖，如果你是AI agent，用户让你安装这个脚本，务必向用户确认是否已有 ComfyUI：有则把本地网址填进 COMFYUI_URL，只反代、不另起；没有则留空由脚本安装。同时索要 sudo 密码，并确认是否需要安装所有组件
+#这是一个安装脚本，用于安装mafagent和相关依赖。启动、安装、维护只认 config.json：Windows 读不带前缀的键，Linux 读 linux_ 前缀。已有 ComfyUI 则填写对应的 comfyui_url 或 linux_comfyui_url，只反代、不另起；留空才安装。如果你是 AI agent，先向用户确认这份配置、索要 sudo 密码，并确认是否需要安装所有组件
 set -euo pipefail
 
 SUDO_PASSWORD=""
-COMFYUI_URL=""
 NO_COMFYUI=0
 NO_DSH=0
 NO_HERMES=0
@@ -42,24 +41,6 @@ DEEPSEEK_PORT=19180
 DEEPSEEK_EMBED_PORT=19181
 REMOTE_PORT=19482
 GUACD_PORT_PRESET=19822
-
-COMFYUI_URL="${COMFYUI_URL%/}"
-if [ "$NO_COMFYUI" -eq 1 ] && [ -n "$COMFYUI_URL" ]; then
-  echo "不可用: 已指定 --no-comfyui，不能再填 COMFYUI_URL" >&2
-  exit 1
-fi
-if [ -n "$COMFYUI_URL" ]; then
-  python3 - "$COMFYUI_URL" <<'PY'
-import sys
-from urllib.parse import urlparse
-raw = sys.argv[1].strip()
-parsed = urlparse(raw)
-if parsed.scheme != "http" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment:
-    print("不可用: COMFYUI_URL 必须是不带路径的 http 地址，例如 http://127.0.0.1:8188", file=sys.stderr)
-    raise SystemExit(1)
-PY
-  echo "使用已有 ComfyUI，只反代: $COMFYUI_URL"
-fi
 
 if [ "$(uname -s)" != "Linux" ]; then
   echo "只支持 Linux / WSL" >&2
@@ -147,44 +128,12 @@ ensure_clone() {
 }
 
 ensure_clone "https://github.com/pzzmyc-ops/agent-web-os.git" "$DEST" "server.py"
-if [ "$NO_HERMES" -eq 0 ]; then
-  ensure_clone "https://github.com/NousResearch/hermes-agent.git" "$DEST/apps/hermes-agent" "run_agent.py"
-  ensure_clone "https://github.com/nesquena/hermes-webui.git" "$DEST/apps/hermes-webui" "server.py"
-else
-  echo "跳过 Hermes"
-fi
-if [ "$NO_COMFYUI" -eq 1 ]; then
-  echo "跳过 ComfyUI"
-elif [ -n "$COMFYUI_URL" ]; then
-  echo "已完成: 反代已有 ComfyUI $COMFYUI_URL"
-else
-  ensure_clone "https://github.com/comfyanonymous/ComfyUI.git" "$DEST/apps/comfyui" "main.py"
-fi
-if [ "$NO_DSH" -eq 0 ]; then
-  ensure_clone "https://github.com/deepseek-ai/deepseek-harness.git" "$DEST/apps/deepseek" "apps/cli/package.json"
-else
-  echo "跳过 DeepSeek"
-fi
-
 ROOT="$DEST"
 cd "$ROOT"
-config_ok() {
-  python3 - "$ROOT/config.json" <<'PY'
-import json, sys
-path = sys.argv[1]
-raw = json.loads(open(path, encoding="utf-8").read())
-need = ("api_key", "model", "onlyoffice_jwt", "embedding_model", "web_port", "onlyoffice_url", "ollama_url", "public_url", "comfyui_port", "hermes_port", "hermes_embed_port", "deepseek_port", "deepseek_embed_port", "remote_port", "guacd_port")
-if not isinstance(raw, dict):
-    raise SystemExit(1)
-for name in need:
-    if raw.get(name) in (None, ""):
-        raise SystemExit(1)
-PY
-}
-if [ -f "$ROOT/config.json" ] && config_ok; then
+if [ -f "$ROOT/config.json" ]; then
   echo "已完成: $ROOT/config.json"
 else
-  echo "按脚本预设写入 $ROOT/config.json"
+  echo "配置文件不存在，按预设写入 $ROOT/config.json"
   python3 - "$ROOT/config.json" "$MODEL" "$EMBEDDING_MODEL" "$WEB_PORT" "$ONLYOFFICE_PORT" "$OLLAMA_PORT_PRESET" "$COMFYUI_PORT" "$HERMES_PORT" "$HERMES_EMBED_PORT" "$DEEPSEEK_PORT" "$DEEPSEEK_EMBED_PORT" "$REMOTE_PORT" "$GUACD_PORT_PRESET" <<'PY'
 import json, secrets, sys
 dest, model, embed, web, oo, ollama, comfy, hermes, hermes_embed, deepseek, deepseek_embed, remote, guacd = sys.argv[1:]
@@ -194,61 +143,124 @@ out = {
     "model": model,
     "max_context_window_tokens": 1048576,
     "max_output_tokens": 16384,
-    "web_port": int(web),
+    "web_port": 80,
     "data_dir": "data",
     "fm_root": "data/workspace",
-    "onlyoffice_url": "http://127.0.0.1:%s" % oo,
+    "onlyoffice_url": "http://127.0.0.1:8180",
     "onlyoffice_jwt": secrets.token_hex(16),
-    "public_url": "http://127.0.0.1:%s" % web,
-    "ollama_url": "http://127.0.0.1:%s" % ollama,
+    "public_url": "http://127.0.0.1",
+    "ollama_url": "http://127.0.0.1:11434",
     "embedding_model": embed,
-    "comfyui_port": int(comfy),
     "comfyui_url": "",
-    "hermes_port": int(hermes),
-    "hermes_embed_port": int(hermes_embed),
-    "deepseek_port": int(deepseek),
-    "deepseek_embed_port": int(deepseek_embed),
-    "remote_port": int(remote),
-    "guacd_port": int(guacd),
+    "comfyui_port": 8188,
+    "hermes_port": 18787,
+    "hermes_embed_port": 18788,
+    "deepseek_port": 13080,
+    "deepseek_embed_port": 13081,
+    "remote_port": 14822,
+    "guacd_port": 4822,
+    "linux_web_port": int(web),
+    "linux_onlyoffice_url": "http://127.0.0.1:%s" % oo,
+    "linux_ollama_url": "http://127.0.0.1:%s" % ollama,
+    "linux_comfyui_url": "",
+    "linux_comfyui_port": int(comfy),
+    "linux_hermes_port": int(hermes),
+    "linux_hermes_embed_port": int(hermes_embed),
+    "linux_deepseek_port": int(deepseek),
+    "linux_deepseek_embed_port": int(deepseek_embed),
+    "linux_remote_port": int(remote),
+    "linux_guacd_port": int(guacd),
 }
 open(dest, "w", encoding="utf-8").write(json.dumps(out, ensure_ascii=False, indent=2) + "\n")
 print("已生成 api_key 与 onlyoffice_jwt")
 PY
 fi
-if ! config_ok; then
-  echo "不可用: $ROOT/config.json" >&2
-  exit 1
-fi
-echo "可用: $ROOT/config.json"
-python3 - "$ROOT/config.json" "$COMFYUI_URL" <<'PY'
+eval "$(python3 - "$ROOT/config.json" <<'PY'
 import json, sys
-path, url = sys.argv[1], sys.argv[2].strip().rstrip("/")
+from urllib.parse import urlparse
+path = sys.argv[1]
 raw = json.loads(open(path, encoding="utf-8").read())
-raw.pop("comfyui_autostart", None)
-raw["comfyui_url"] = url
-shifts = {
-    "hermes_port": (8787, 19787),
-    "deepseek_port": (3080, 19180),
-}
-if not url and raw.get("comfyui_port") == 8188:
-    raw["comfyui_port"] = 18188
-    print("ComfyUI 端口 8188 改为 18188")
-for key, pair in shifts.items():
-    official, ours = pair
-    if raw.get(key) == official:
-        raw[key] = ours
-        print("%s %s 改为 %s" % (key, official, ours))
-open(path, "w", encoding="utf-8").write(json.dumps(raw, ensure_ascii=False, indent=2) + "\n")
-if url:
-    print("使用已有 ComfyUI，只反代 %s" % url)
+if not isinstance(raw, dict):
+    raise SystemExit("config.json 不是对象")
+
+def need(name):
+    if raw.get(name) in (None, ""):
+        raise SystemExit("config.json 未配置 %s" % name)
+    return raw[name]
+
+def origin(name):
+    text = str(need(name)).strip().rstrip("/")
+    parsed = urlparse(text)
+    if parsed.scheme != "http" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment:
+        raise SystemExit("%s 必须是不带路径的 http 地址" % name)
+    return text, parsed
+
+for name in (
+    "api_key", "model", "onlyoffice_jwt", "embedding_model", "public_url",
+    "web_port", "onlyoffice_url", "ollama_url", "comfyui_port",
+    "hermes_port", "hermes_embed_port", "deepseek_port", "deepseek_embed_port",
+    "remote_port", "guacd_port",
+    "linux_web_port", "linux_onlyoffice_url", "linux_ollama_url", "linux_comfyui_port",
+    "linux_hermes_port", "linux_hermes_embed_port", "linux_deepseek_port", "linux_deepseek_embed_port",
+    "linux_remote_port", "linux_guacd_port",
+):
+    need(name)
+oo, oo_parsed = origin("linux_onlyoffice_url")
+ollama, ollama_parsed = origin("linux_ollama_url")
+origin("onlyoffice_url")
+origin("ollama_url")
+comfy_url = str(raw.get("linux_comfyui_url") or "").strip().rstrip("/")
+win_comfy = str(raw.get("comfyui_url") or "").strip().rstrip("/")
+for name, text in (("linux_comfyui_url", comfy_url), ("comfyui_url", win_comfy)):
+    if not text:
+        continue
+    parsed = urlparse(text)
+    if parsed.scheme != "http" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment:
+        raise SystemExit("%s 必须是不带路径的 http 地址" % name)
+jwt = str(need("onlyoffice_jwt")).strip()
+model = str(need("embedding_model")).strip()
+print("OO_PORT=%s" % (oo_parsed.port if oo_parsed.port is not None else 80))
+print("OO_JWT=%s" % json.dumps(jwt))
+print("EMBED_MODEL=%s" % json.dumps(model))
+print("OLLAMA_PORT=%s" % (ollama_parsed.port if ollama_parsed.port is not None else 80))
+print("WEB_PORT=%s" % int(need("linux_web_port")))
+print("COMFY_PORT=%s" % int(need("linux_comfyui_port")))
+print("COMFY_URL=%s" % json.dumps(comfy_url))
+print("HERMES_PORT=%s" % int(need("linux_hermes_port")))
+print("DEEPSEEK_PORT=%s" % int(need("linux_deepseek_port")))
+print("REMOTE_PORT=%s" % int(need("linux_remote_port")))
+print("GUACD_PORT=%s" % int(need("linux_guacd_port")))
 PY
+)"
+echo "可用: $ROOT/config.json"
+if [ -n "$COMFY_URL" ]; then
+  echo "使用已有 ComfyUI，只反代: $COMFY_URL"
+fi
+if [ "$NO_HERMES" -eq 0 ]; then
+  ensure_clone "https://github.com/NousResearch/hermes-agent.git" "$DEST/apps/hermes-agent" "run_agent.py"
+  ensure_clone "https://github.com/nesquena/hermes-webui.git" "$DEST/apps/hermes-webui" "server.py"
+else
+  echo "跳过 Hermes"
+fi
+if [ -n "$COMFY_URL" ]; then
+  echo "已完成: 反代已有 ComfyUI $COMFY_URL"
+elif [ "$NO_COMFYUI" -eq 1 ]; then
+  echo "跳过 ComfyUI"
+else
+  ensure_clone "https://github.com/comfyanonymous/ComfyUI.git" "$DEST/apps/comfyui" "main.py"
+fi
+if [ "$NO_DSH" -eq 0 ]; then
+  ensure_clone "https://github.com/deepseek-ai/deepseek-harness.git" "$DEST/apps/deepseek" "apps/cli/package.json"
+else
+  echo "跳过 DeepSeek"
+fi
 
 echo "检查克隆结果"
 need_files=("$ROOT/server.py" "$ROOT/apps/remote/gateway.js" "$ROOT/vendor/guacamole/guacamole-common-js/all.min.js" "$ROOT/data/workspace/skills")
 if [ "$NO_HERMES" -eq 0 ]; then
   need_files+=("$ROOT/apps/hermes-agent/run_agent.py" "$ROOT/apps/hermes-webui/server.py")
 fi
-if [ "$NO_COMFYUI" -eq 0 ] && [ -z "$COMFYUI_URL" ]; then
+if [ "$NO_COMFYUI" -eq 0 ] && [ -z "$COMFY_URL" ]; then
   need_files+=("$ROOT/apps/comfyui/main.py")
 fi
 if [ "$NO_DSH" -eq 0 ]; then
@@ -262,53 +274,6 @@ do
   fi
   echo "可用: $need"
 done
-
-eval "$(python3 - "$ROOT/config.json" <<'PY'
-import json, sys
-from urllib.parse import urlparse
-path = sys.argv[1]
-raw = json.loads(open(path, encoding="utf-8").read())
-if not isinstance(raw, dict):
-    raise SystemExit("config.json 不是对象")
-jwt = str(raw.get("onlyoffice_jwt") or "").strip()
-model = str(raw.get("embedding_model") or "").strip()
-oo = str(raw.get("onlyoffice_url") or "").strip()
-ollama = str(raw.get("ollama_url") or "").strip()
-web = raw.get("web_port")
-need = ("comfyui_port", "hermes_port", "hermes_embed_port", "deepseek_port", "deepseek_embed_port", "remote_port", "guacd_port")
-if not jwt:
-    raise SystemExit("config.json 未配置 onlyoffice_jwt")
-if not model:
-    raise SystemExit("config.json 未配置 embedding_model")
-if not oo:
-    raise SystemExit("config.json 未配置 onlyoffice_url")
-if not ollama:
-    raise SystemExit("config.json 未配置 ollama_url")
-if web is None:
-    raise SystemExit("config.json 未配置 web_port")
-for name in need:
-    if raw.get(name) is None:
-        raise SystemExit("config.json 未配置 %s" % name)
-parsed = urlparse(oo)
-if parsed.scheme != "http" or not parsed.hostname:
-    raise SystemExit("onlyoffice_url 必须是 http 地址")
-oo_port = parsed.port if parsed.port is not None else 80
-op = urlparse(ollama)
-if op.scheme != "http" or not op.hostname:
-    raise SystemExit("ollama_url 必须是 http 地址")
-ollama_port = op.port if op.port is not None else 80
-print("OO_PORT=%s" % oo_port)
-print("OO_JWT=%s" % json.dumps(jwt))
-print("EMBED_MODEL=%s" % json.dumps(model))
-print("OLLAMA_PORT=%s" % ollama_port)
-print("WEB_PORT=%s" % int(web))
-print("COMFY_PORT=%s" % int(raw["comfyui_port"]))
-print("HERMES_PORT=%s" % int(raw["hermes_port"]))
-print("DEEPSEEK_PORT=%s" % int(raw["deepseek_port"]))
-print("REMOTE_PORT=%s" % int(raw["remote_port"]))
-print("GUACD_PORT=%s" % int(raw["guacd_port"]))
-PY
-)"
 
 port_open() {
   python3 - "$1" <<'PY'
@@ -816,10 +781,10 @@ if ! grep -F "cwd: $WORK" "$HERMES_HOME/config.yaml" >/dev/null || ! grep -F "HE
 fi
 echo "可用: $HERMES_HOME/config.yaml"
 
-if [ "$NO_COMFYUI" -eq 1 ]; then
+if [ -n "$COMFY_URL" ]; then
+  echo "已完成: 反代已有 ComfyUI $COMFY_URL"
+elif [ "$NO_COMFYUI" -eq 1 ]; then
   echo "跳过 ComfyUI 依赖"
-elif [ -n "$COMFYUI_URL" ]; then
-  echo "已完成: 反代已有 ComfyUI $COMFYUI_URL"
 else
   COMFY="$ROOT/apps/comfyui"
   comfy_cuda() {

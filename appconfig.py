@@ -98,6 +98,7 @@ def load_config() -> Config:
     raw: dict = {}
     if _CONFIG_PATH.is_file():
         raw = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+    windows = os.name == "nt"
 
     def pick(key: str, default):
         v = raw.get(key)
@@ -105,45 +106,38 @@ def load_config() -> Config:
             return default
         return v
 
-    if raw.get("web_port") is None:
-        raise RuntimeError(f"web_port 未配置:在 {_CONFIG_PATH} 里设 web_port")
-    web_port = int(raw["web_port"])
-    onlyoffice_url = str(pick("onlyoffice_url", ""))
-    public_url = str(pick("public_url", ""))
-    ollama_url = str(pick("ollama_url", "http://127.0.0.1:11434")).rstrip("/")
-    comfyui_url = str(pick("comfyui_url", "")).rstrip("/")
-    if comfyui_url:
+    def need(key: str):
+        if raw.get(key) in (None, ""):
+            raise RuntimeError(f"{key} 未配置:在 {_CONFIG_PATH} 里设 {key}")
+        return raw[key]
+
+    def platform(key: str):
+        name = key if windows else "linux_" + key
+        return need(name)
+
+    def http_origin(key: str, value: str) -> str:
         from urllib.parse import urlparse
-        parsed = urlparse(comfyui_url)
+        text = str(value).strip().rstrip("/")
+        parsed = urlparse(text)
         if parsed.scheme != "http" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment:
-            raise RuntimeError("comfyui_url 必须是不带路径的 http 地址: " + comfyui_url)
-    if os.name == "nt":
-        comfyui_port = 8188 if raw.get("comfyui_port") is None else int(raw["comfyui_port"])
-        hermes_port = 18787 if raw.get("hermes_port") is None else int(raw["hermes_port"])
-        hermes_embed_port = 18788 if raw.get("hermes_embed_port") is None else int(raw["hermes_embed_port"])
-        deepseek_port = 13080 if raw.get("deepseek_port") is None else int(raw["deepseek_port"])
-        deepseek_embed_port = 13081 if raw.get("deepseek_embed_port") is None else int(raw["deepseek_embed_port"])
-        remote_port = 14822 if raw.get("remote_port") is None else int(raw["remote_port"])
-        guacd_port = 4822 if raw.get("guacd_port") is None else int(raw["guacd_port"])
-    else:
-        for name in (
-            "comfyui_port",
-            "hermes_port",
-            "hermes_embed_port",
-            "deepseek_port",
-            "deepseek_embed_port",
-            "remote_port",
-            "guacd_port",
-        ):
-            if raw.get(name) is None:
-                raise RuntimeError(f"{name} 未配置:在 {_CONFIG_PATH} 里设 {name}")
-        comfyui_port = int(raw["comfyui_port"])
-        hermes_port = int(raw["hermes_port"])
-        hermes_embed_port = int(raw["hermes_embed_port"])
-        deepseek_port = int(raw["deepseek_port"])
-        deepseek_embed_port = int(raw["deepseek_embed_port"])
-        remote_port = int(raw["remote_port"])
-        guacd_port = int(raw["guacd_port"])
+            raise RuntimeError(key + " 必须是不带路径的 http 地址: " + text)
+        return text
+
+    web_port = int(platform("web_port"))
+    onlyoffice_url = http_origin("onlyoffice_url" if windows else "linux_onlyoffice_url", platform("onlyoffice_url"))
+    ollama_url = http_origin("ollama_url" if windows else "linux_ollama_url", platform("ollama_url"))
+    comfyui_key = "comfyui_url" if windows else "linux_comfyui_url"
+    comfyui_url = str(raw.get(comfyui_key) or "").strip().rstrip("/")
+    if comfyui_url:
+        comfyui_url = http_origin(comfyui_key, comfyui_url)
+    comfyui_port = int(platform("comfyui_port"))
+    hermes_port = int(platform("hermes_port"))
+    hermes_embed_port = int(platform("hermes_embed_port"))
+    deepseek_port = int(platform("deepseek_port"))
+    deepseek_embed_port = int(platform("deepseek_embed_port"))
+    remote_port = int(platform("remote_port"))
+    guacd_port = int(platform("guacd_port"))
+    public_url = str(pick("public_url", ""))
 
     return Config(
         base_url=str(pick("base_url", f"http://127.0.0.1:{web_port}/api/llm-proxy/v1")),
