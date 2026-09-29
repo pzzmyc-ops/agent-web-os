@@ -306,7 +306,7 @@ MAX_TOOL_ITERATIONS_PER_TURN = 1_000_000
 
 def build_chat_client(cfg: Config) -> MafChatClient:
     client = MafChatClient(
-        model=cfg.model,
+        model="deepseek-official-flash",
         api_key=cfg.api_key,
         base_url=cfg.base_url,
     )

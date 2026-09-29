@@ -33,6 +33,13 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _thread_rank(thread: dict) -> int:
+    sort = thread.get("sort")
+    if isinstance(sort, int) and not isinstance(sort, bool):
+        return sort
+    return int(thread.get("updated_at") or thread.get("created_at") or 0)
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex
 
@@ -284,11 +291,7 @@ class Store:
 
     def list_threads(self) -> list[dict]:
         idx = self._read_index()
-        threads = sorted(
-            idx["threads"],
-            key=lambda t: (t.get("updated_at", 0), t.get("created_at", 0)),
-            reverse=True,
-        )
+        threads = sorted(idx["threads"], key=_thread_rank, reverse=True)
         return [
             {
                 "id": t["id"],
@@ -530,6 +533,42 @@ class Store:
             break
         if not found:
             raise FileNotFoundError(f"会话已删除: {thread_id}")
+        self._write_index(idx)
+
+    def place_thread(self, thread_id: str, anchor_id: str, *, after: bool) -> None:
+        if thread_id == anchor_id:
+            return
+        idx = self._read_index()
+        moving = next((t for t in idx["threads"] if t["id"] == thread_id), None)
+        anchor = next((t for t in idx["threads"] if t["id"] == anchor_id), None)
+        if moving is None or anchor is None:
+            raise FileNotFoundError(f"会话已删除: {thread_id if moving is None else anchor_id}")
+        if str(moving.get("app") or "") != str(anchor.get("app") or ""):
+            raise RuntimeError("不能把对话放到其他应用的分组")
+        fid = str(anchor.get("folder_id") or "")
+        if fid:
+            folder = next((f for f in idx["folders"] if f["id"] == fid), None)
+            if folder is None:
+                raise RuntimeError("文件夹不存在")
+            if str(folder.get("app") or "") != str(moving.get("app") or ""):
+                raise RuntimeError("不能把对话放到其他应用的分组")
+            moving["folder_id"] = fid
+        else:
+            moving.pop("folder_id", None)
+        app = str(moving.get("app") or "")
+        siblings = [
+            t for t in idx["threads"]
+            if str(t.get("folder_id") or "") == fid and str(t.get("app") or "") == app
+        ]
+        siblings.sort(key=_thread_rank, reverse=True)
+        siblings = [t for t in siblings if t["id"] != moving["id"]]
+        pos = next(i for i, t in enumerate(siblings) if t["id"] == anchor_id)
+        if after:
+            pos += 1
+        siblings.insert(pos, moving)
+        top = max(_thread_rank(t) for t in siblings) + len(siblings)
+        for i, thread in enumerate(siblings):
+            thread["sort"] = top - i
         self._write_index(idx)
 
     def _folder_name(self, name: str) -> str:

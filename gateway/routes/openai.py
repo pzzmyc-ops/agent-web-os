@@ -47,7 +47,10 @@ def _sse_error(message: str) -> bytes:
 @router.get("/models")
 async def models():
     return {"object": "list", "data": [
-        {"id": m["id"], "object": "model", "owned_by": m["provider"], "kind": m["kind"]}
+        {"id": m["id"], "object": "model", "owned_by": m["provider"], "kind": m["kind"],
+         "displayName": m.get("displayName") or m["id"], "media_caps": m.get("media_caps") or {},
+         "context_window": m.get("context_window"), "description": m.get("description") or "",
+         "ui": m.get("ui") or {}}
         for m in registry.list_all_models()
     ]}
 

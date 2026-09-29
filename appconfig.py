@@ -30,6 +30,7 @@ class Config:
     ollama_url: str = "http://127.0.0.1:11434"
     embedding_model: str = "bge-m3"
     comfyui_port: int = 8188
+    comfyui_autostart: bool = True
     hermes_port: int = 18787
     hermes_embed_port: int = 18788
     deepseek_port: int = 13080
@@ -153,6 +154,7 @@ def load_config() -> Config:
         ollama_url=ollama_url,
         embedding_model=str(pick("embedding_model", "bge-m3")),
         comfyui_port=comfyui_port,
+        comfyui_autostart=bool(raw.get("comfyui_autostart", True)),
         hermes_port=hermes_port,
         hermes_embed_port=hermes_embed_port,
         deepseek_port=deepseek_port,

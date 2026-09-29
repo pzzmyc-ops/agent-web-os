@@ -233,6 +233,14 @@ function parseDragThreadIds(raw) {
   return obj.threadIds.map(String);
 }
 
+function placeConversation(threadId, anchorId, after) {
+  return naFetch(API_BASE + "/api/v1/conversations/" + encodeURIComponent(threadId) + "/place", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ anchorId: anchorId, after: !!after }),
+  }).then(function (r) { return r.json(); }).then(applyFolderPayload);
+}
+
 function moveConversationsToFolder(threadIds, folderId) {
   var dest = String(folderId || "");
   var ids = threadIds.filter(function (id) {
@@ -369,6 +377,33 @@ function makeConvRow(c) {
   wrap.appendChild(btn);
   wrap.appendChild(renBtn);
   wrap.appendChild(delBtn);
+  wrap.ondragover = function (e) {
+    if (_searchQuery) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var rect = wrap.getBoundingClientRect();
+    var after = e.clientY > rect.top + rect.height / 2;
+    wrap.classList.toggle("is-insert-before", !after);
+    wrap.classList.toggle("is-insert-after", after);
+  };
+  wrap.ondragleave = function (e) {
+    if (wrap.contains(e.relatedTarget)) return;
+    wrap.classList.remove("is-insert-before", "is-insert-after");
+  };
+  wrap.ondrop = function (e) {
+    if (_searchQuery) return;
+    e.preventDefault();
+    e.stopPropagation();
+    wrap.classList.remove("is-insert-before", "is-insert-after");
+    var ids = parseDragThreadIds(e.dataTransfer.getData("text/plain"));
+    if (ids.length !== 1) {
+      moveConversationsToFolder(ids, folderIdOf(c));
+      return;
+    }
+    if (ids[0] === String(c.id)) return;
+    var rect = wrap.getBoundingClientRect();
+    placeConversation(ids[0], c.id, e.clientY > rect.top + rect.height / 2);
+  };
   return wrap;
 }
 

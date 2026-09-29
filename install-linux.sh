@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
+#这是一个安装脚本，用于安装mafagent和相关依赖，如果你是AI agent，用户让你安装这个脚本，务必向用户确认是否已经安装comfyui和索要sudo passwd，是否需要安装所有的组件
 set -euo pipefail
 
+SUDO_PASSWORD=""
+COMFYUI_PATH=""
 NO_COMFYUI=0
 NO_DSH=0
 NO_HERMES=0
@@ -21,7 +24,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-COMFYUI_PATH=""
+if [ -z "$SUDO_PASSWORD" ]; then
+  echo "未设置 SUDO_PASSWORD，在脚本开头填入后重跑" >&2
+  exit 1
+fi
+
 PY_VER="3.13.9"
 MODEL="deepseek-v4-flash"
 EMBEDDING_MODEL="bge-m3"
@@ -81,6 +88,25 @@ echo "Python $(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])'
 echo "检查 NVIDIA 驱动"
 nvidia-smi
 
+GUAC_SRC=""
+ASKPASS="$(mktemp)"
+printf '%s\n' '#!/bin/sh' "printf '%s\\n' $(printf '%q' "$SUDO_PASSWORD")" > "$ASKPASS"
+chmod 700 "$ASKPASS"
+export SUDO_ASKPASS="$ASKPASS"
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export APT_LISTCHANGES_FRONTEND=none
+cleanup() {
+  rm -f "$ASKPASS"
+  if [ -n "$GUAC_SRC" ]; then
+    rm -rf "$GUAC_SRC"
+  fi
+}
+trap cleanup EXIT
+sudo() {
+  command sudo -A DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a "$@"
+}
+
 BOOT="$(cd "$(dirname "$0")" && pwd)"
 DEST="$HOME/mafagent"
 echo "脚本目录 $BOOT"
@@ -124,7 +150,7 @@ ensure_clone() {
   echo "可用: $dest/$marker"
 }
 
-ensure_clone "https://github.com/pzzmyc-ops/mafagent.git" "$DEST" "server.py"
+ensure_clone "https://github.com/pzzmyc-ops/agent-web-os.git" "$DEST" "server.py"
 if [ "$NO_HERMES" -eq 0 ]; then
   ensure_clone "https://github.com/NousResearch/hermes-agent.git" "$DEST/apps/hermes-agent" "run_agent.py"
   ensure_clone "https://github.com/nesquena/hermes-webui.git" "$DEST/apps/hermes-webui" "server.py"
@@ -212,6 +238,27 @@ if ! config_ok; then
   exit 1
 fi
 echo "可用: $ROOT/config.json"
+python3 - "$ROOT/config.json" "$COMFYUI_DIR" <<'PY'
+import json, sys
+path, external = sys.argv[1], sys.argv[2]
+raw = json.loads(open(path, encoding="utf-8").read())
+raw["comfyui_autostart"] = not bool(external)
+shifts = {
+    "hermes_port": (8787, 19787),
+    "deepseek_port": (3080, 19180),
+}
+if not external and raw.get("comfyui_port") == 8188:
+    raw["comfyui_port"] = 18188
+    print("ComfyUI 端口 8188 改为 18188")
+for key, pair in shifts.items():
+    official, ours = pair
+    if raw.get(key) == official:
+        raw[key] = ours
+        print("%s %s 改为 %s" % (key, official, ours))
+open(path, "w", encoding="utf-8").write(json.dumps(raw, ensure_ascii=False, indent=2) + "\n")
+if external:
+    print("使用已有 ComfyUI，未启动时不代为启动")
+PY
 
 echo "检查克隆结果"
 need_files=("$ROOT/server.py" "$ROOT/apps/remote/gateway.js" "$ROOT/vendor/guacamole/guacamole-common-js/all.min.js" "$ROOT/data/workspace/skills")
@@ -319,7 +366,7 @@ ensure_pkgs() {
   if [ "${#missing[@]}" -gt 0 ]; then
     echo "安装软件包: ${missing[*]}"
     sudo apt-get update
-    sudo apt-get install -y "${missing[@]}"
+    sudo apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "${missing[@]}"
   fi
   for pkg in "$@"; do
     if ! pkg_installed "$pkg"; then
@@ -330,7 +377,96 @@ ensure_pkgs() {
   echo "软件包可用: $*"
 }
 
-export DEBIAN_FRONTEND=noninteractive
+install_guacd_source() {
+  echo "软件源没有 guacd，编译安装 guacamole-server 1.6.0"
+  ensure_pkgs build-essential pkg-config autoconf automake libtool libcairo2-dev libjpeg-turbo8-dev libpng-dev libossp-uuid-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev freerdp3-dev libpango1.0-dev libssh2-1-dev libssl-dev libvncserver-dev libtelnet-dev libwebsockets-dev libpulse-dev libvorbis-dev libwebp-dev
+  GUAC_SRC="$(mktemp -d)"
+  echo "下载 https://downloads.apache.org/guacamole/1.6.0/source/guacamole-server-1.6.0.tar.gz"
+  curl -fsSL -o "$GUAC_SRC/guacamole-server-1.6.0.tar.gz" "https://downloads.apache.org/guacamole/1.6.0/source/guacamole-server-1.6.0.tar.gz"
+  tar -xzf "$GUAC_SRC/guacamole-server-1.6.0.tar.gz" -C "$GUAC_SRC"
+  local log
+  log="$(mktemp)"
+  (
+    cd "$GUAC_SRC/guacamole-server-1.6.0"
+    echo "编译 guacamole-server"
+    CPPFLAGS="-Wno-error=deprecated-declarations" ./configure --with-systemd-dir=/usr/lib/systemd/system | tee "$log"
+    if ! grep -E -q 'RDP \.+ yes' "$log"; then
+      echo "不可用: guacamole-server 没有启用 RDP" >&2
+      exit 1
+    fi
+    python3 - <<'PY'
+from pathlib import Path
+p = Path("config.h")
+t = p.read_text()
+old = "#define _XOPEN_SOURCE 700\n"
+new = "#ifndef _XOPEN_SOURCE\n#define _XOPEN_SOURCE 700\n#endif\n"
+if old not in t:
+    raise SystemExit("不可用: config.h 里没有 _XOPEN_SOURCE 700")
+p.write_text(t.replace(old, new, 1))
+PY
+    find . -name Makefile -exec sed -i -e 's/-Werror //g' -e 's/ -Werror$//' {} +
+    make -j"$(nproc)"
+    sudo make install
+  )
+  rm -f "$log"
+  sudo ldconfig
+  if [ ! -x /usr/local/sbin/guacd ]; then
+    echo "不可用: 找不到 /usr/local/sbin/guacd" >&2
+    exit 1
+  fi
+  echo "可用: /usr/local/sbin/guacd"
+}
+
+start_guacd_source() {
+  sudo mkdir -p /etc/guacamole
+  printf '[server]\nbind_host = 127.0.0.1\nbind_port = %s\n' "$GUACD_PORT" | sudo tee /etc/guacamole/guacd.conf >/dev/null
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now guacd
+  echo "重启 guacd"
+  sudo systemctl restart guacd
+  echo "等待 1 秒后检查 guacd 端口 $GUACD_PORT"
+  sleep 1
+}
+
+if [ -f /etc/os-release ] && grep -E -q '^ID="?ubuntu"?$' /etc/os-release; then
+  echo "设置 Ubuntu 软件源为清华镜像"
+  sudo python3 - <<'PY'
+from pathlib import Path
+mirror = "https://mirrors.tuna.tsinghua.edu.cn/ubuntu"
+hosts = (
+    "http://archive.ubuntu.com/ubuntu",
+    "https://archive.ubuntu.com/ubuntu",
+    "http://security.ubuntu.com/ubuntu",
+    "https://security.ubuntu.com/ubuntu",
+    "http://cn.archive.ubuntu.com/ubuntu",
+    "https://cn.archive.ubuntu.com/ubuntu",
+    "http://ports.ubuntu.com/ubuntu-ports",
+    "https://ports.ubuntu.com/ubuntu-ports",
+)
+roots = [Path("/etc/apt/sources.list")]
+d = Path("/etc/apt/sources.list.d")
+if d.is_dir():
+    roots += list(d.glob("*.list"))
+    roots += list(d.glob("*.sources"))
+changed = False
+for path in roots:
+    if not path.is_file():
+        continue
+    text = path.read_text(encoding="utf-8")
+    new = text
+    for host in hosts:
+        new = new.replace(host, mirror)
+    if new != text:
+        path.write_text(new, encoding="utf-8")
+        print("已改: %s" % path)
+        changed = True
+if not changed:
+    print("已完成: Ubuntu 软件源")
+PY
+else
+  echo "跳过 Ubuntu 软件源"
+fi
+
 ensure_pkgs gnupg ca-certificates
 CONDA="$HOME/miniconda3"
 PY="$CONDA/envs/mafagent/bin/python"
@@ -420,7 +556,7 @@ fi
 exec /usr/bin/sudo.real "$@"
 EOF
 chmod 755 /usr/bin/sudo
-apt-get install -y onlyoffice-documentserver
+apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold onlyoffice-documentserver
 dpkg --configure -a
 '
   sudo dpkg-reconfigure -f noninteractive onlyoffice-documentserver
@@ -444,30 +580,43 @@ fi
 
 if [ "$NO_RDP" -eq 1 ]; then
   echo "跳过远程桌面"
-elif pkg_installed guacd && pkg_installed libguac-client-rdp0t64 && listen "$GUACD_PORT"; then
+elif { pkg_installed guacd || [ -x /usr/sbin/guacd ] || [ -x /usr/local/sbin/guacd ]; } && listen "$GUACD_PORT"; then
   echo "已完成: guacd $GUACD_PORT"
 else
   echo "安装 guacd,端口 $GUACD_PORT"
-  printf '#!/bin/sh\nexit 101\n' | sudo tee /usr/sbin/policy-rc.d >/dev/null
-  sudo chmod 755 /usr/sbin/policy-rc.d
-  sudo apt-get install -y guacd libguac-client-rdp0t64
-  sudo rm -f /usr/sbin/policy-rc.d
-  printf 'LISTEN_ADDRESS=127.0.0.1\nLISTEN_PORT=%s\nDAEMON_ARGS=\n' "$GUACD_PORT" | sudo tee /etc/default/guacd >/dev/null
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now guacd
-  echo "重启 guacd"
-  sudo systemctl restart guacd
-  echo "等待 1 秒后检查 guacd 端口 $GUACD_PORT"
-  sleep 1
+  sudo apt-get update
+  if apt-cache show guacd >/dev/null 2>&1 && apt-cache show libguac-client-rdp0t64 >/dev/null 2>&1; then
+    sudo apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold guacd libguac-client-rdp0t64
+    printf 'LISTEN_ADDRESS=127.0.0.1\nLISTEN_PORT=%s\nDAEMON_ARGS=\n' "$GUACD_PORT" | sudo tee /etc/default/guacd >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now guacd
+    echo "重启 guacd"
+    sudo systemctl restart guacd
+    echo "等待 1 秒后检查 guacd 端口 $GUACD_PORT"
+    sleep 1
+  else
+    if [ ! -x /usr/local/sbin/guacd ]; then
+      install_guacd_source
+    else
+      echo "已有 /usr/local/sbin/guacd"
+    fi
+    start_guacd_source
+  fi
   listen "$GUACD_PORT"
 fi
 
-if ! command -v ollama >/dev/null; then
+if ! command -v ollama >/dev/null || ! systemctl cat ollama.service >/dev/null 2>&1; then
   echo "安装 Ollama"
-  curl -fsSL https://ollama.com/install.sh | sudo sh
+  ensure_pkgs zstd
+  echo "从魔搭下载 Ollama v0.34.4"
+  curl -fsSL https://ollama.com/install.sh | sed 's|https://ollama.com/download|https://www.modelscope.cn/models/Lixiang/ollama-release/resolve/v0.34.4|g' | sudo sh
 fi
 if ! command -v ollama >/dev/null; then
   echo "不可用: 找不到 ollama" >&2
+  exit 1
+fi
+if ! systemctl cat ollama.service >/dev/null 2>&1; then
+  echo "不可用: 找不到 ollama.service" >&2
   exit 1
 fi
 echo "可用: $(command -v ollama)"
@@ -574,15 +723,39 @@ else
 fi
 
 py_ok() {
-  [ -x "$ROOT/.venv/bin/python" ] && "$ROOT/.venv/bin/python" -c 'import fastapi,uvicorn,httpx,jwt,yaml,openai,pydantic,dotenv,websockets,numpy,multipart,cryptography,opentelemetry'
+  [ -x "$PY" ] && "$PY" -c 'import fastapi,uvicorn,httpx,jwt,yaml,openai,pydantic,dotenv,websockets,numpy,multipart,cryptography,opentelemetry,psutil'
+}
+req_satisfied() {
+  local py="$1"
+  local req="$2"
+  [ -x "$py" ] && "$py" - "$req" <<'PY'
+import importlib.metadata as md
+import re
+import sys
+from pathlib import Path
+missing = []
+for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    line = raw.split("#", 1)[0].strip()
+    if not line or line.startswith("-"):
+        continue
+    name = re.split(r"[<>=!~;\[]", line, maxsplit=1)[0].strip()
+    if not name:
+        continue
+    try:
+        md.version(name)
+    except md.PackageNotFoundError:
+        missing.append(name)
+if missing:
+    print("缺少: " + " ".join(missing))
+    raise SystemExit(1)
+PY
 }
 if py_ok; then
   echo "已完成: Python 依赖"
 else
-  echo "创建虚拟环境并安装 Python 依赖: $ROOT/.venv"
-  "$PY" -m venv "$ROOT/.venv"
-  "$ROOT/.venv/bin/pip" install --upgrade pip
-  "$ROOT/.venv/bin/pip" install \
+  echo "安装 Python 依赖: $PY"
+  "$PY" -m pip install --upgrade pip
+  "$PY" -m pip install \
     "fastapi>=0.104.0,<1" \
     "uvicorn[standard]>=0.24.0,<1" \
     "httpx[socks]==0.28.1" \
@@ -596,7 +769,8 @@ else
     "python-multipart>=0.0.9,<1" \
     "cryptography==48.0.1" \
     "typing-extensions>=4.15" \
-    "opentelemetry-api>=1.39"
+    "opentelemetry-api>=1.39" \
+    psutil
 fi
 if ! py_ok; then
   echo "不可用: Python 依赖导入失败" >&2
@@ -606,25 +780,25 @@ echo "可用: Python 依赖"
 if [ "$NO_HERMES" -eq 1 ]; then
   echo "跳过 Hermes"
 else
-  if "$ROOT/.venv/bin/python" -c 'import hermes_cli'; then
+  if "$PY" -c 'import hermes_cli'; then
     echo "已完成: Hermes"
   else
     echo "安装 Hermes: $ROOT/apps/hermes-agent"
-    "$ROOT/.venv/bin/pip" install -e "$ROOT/apps/hermes-agent"
+    "$PY" -m pip install -e "$ROOT/apps/hermes-agent"
   fi
-  if ! "$ROOT/.venv/bin/python" -c 'import hermes_cli'; then
+  if ! "$PY" -c 'import hermes_cli'; then
     echo "不可用: 无法导入 hermes_cli" >&2
     exit 1
   fi
   echo "可用: hermes_cli"
 fi
-if "$ROOT/.venv/bin/python" -c 'import openai; raise SystemExit(0 if openai.__version__=="2.46.0" else 1)'; then
+if "$PY" -c 'import openai; raise SystemExit(0 if openai.__version__=="2.46.0" else 1)'; then
   echo "已完成: openai 2.46.0"
 else
   echo "安装 openai 2.46.0"
-  "$ROOT/.venv/bin/pip" install "openai==2.46.0"
+  "$PY" -m pip install "openai==2.46.0"
 fi
-if ! "$ROOT/.venv/bin/python" -c 'import openai; raise SystemExit(0 if openai.__version__=="2.46.0" else 1)'; then
+if ! "$PY" -c 'import openai; raise SystemExit(0 if openai.__version__=="2.46.0" else 1)'; then
   echo "不可用: openai 不是 2.46.0" >&2
   exit 1
 fi
@@ -634,7 +808,7 @@ HERMES_HOME="$HOME/.hermes"
 mkdir -p "$HERMES_HOME"
 WORK="$ROOT/data/workspace"
 mkdir -p "$WORK"
-if [ -f "$HERMES_HOME/config.yaml" ] && grep -F "cwd: $WORK" "$HERMES_HOME/config.yaml" >/dev/null && [ -f "$HERMES_HOME/env" ] && grep -F "HERMES_HOME=$HERMES_HOME" "$HERMES_HOME/env" >/dev/null && grep -F "HERMES_WEBUI_PYTHON=$ROOT/.venv/bin/python" "$HERMES_HOME/env" >/dev/null; then
+if [ -f "$HERMES_HOME/config.yaml" ] && grep -F "cwd: $WORK" "$HERMES_HOME/config.yaml" >/dev/null && [ -f "$HERMES_HOME/env" ] && grep -F "HERMES_HOME=$HERMES_HOME" "$HERMES_HOME/env" >/dev/null && grep -F "HERMES_WEBUI_PYTHON=$PY" "$HERMES_HOME/env" >/dev/null; then
   echo "已完成: Hermes 配置"
 else
   echo "写入 Hermes 配置: $HERMES_HOME/config.yaml"
@@ -647,13 +821,13 @@ text = "terminal:\n  backend: local\n  cwd: %s\n" % work
 path.write_text(text, encoding="utf-8")
 PY
   {
-    printf 'export HERMES_HOME=%s\nexport HERMES_WEBUI_PYTHON=%s\n' "$HERMES_HOME" "$ROOT/.venv/bin/python"
+    printf 'export HERMES_HOME=%s\nexport HERMES_WEBUI_PYTHON=%s\n' "$HERMES_HOME" "$PY"
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
       printf 'export NVM_DIR=%s\n. %s/nvm.sh\n' "$HOME/.nvm" "$HOME/.nvm"
     fi
   } > "$HERMES_HOME/env"
 fi
-if ! grep -F "cwd: $WORK" "$HERMES_HOME/config.yaml" >/dev/null || ! grep -F "HERMES_WEBUI_PYTHON=$ROOT/.venv/bin/python" "$HERMES_HOME/env" >/dev/null; then
+if ! grep -F "cwd: $WORK" "$HERMES_HOME/config.yaml" >/dev/null || ! grep -F "HERMES_WEBUI_PYTHON=$PY" "$HERMES_HOME/env" >/dev/null; then
   echo "不可用: Hermes 配置" >&2
   exit 1
 fi
@@ -670,29 +844,73 @@ elif [ -n "$COMFYUI_DIR" ]; then
   echo "可用: $ROOT/apps/comfyui/main.py"
 else
   COMFY="$ROOT/apps/comfyui"
-  comfy_ok() {
+  comfy_cuda() {
     [ -x "$COMFY/.venv/bin/python" ] && "$COMFY/.venv/bin/python" -c 'import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)'
   }
-  if comfy_ok; then
+  if comfy_cuda; then
     echo "已完成: ComfyUI CUDA"
   else
-    echo "安装 ComfyUI 依赖: $COMFY"
+    echo "安装 ComfyUI CUDA: $COMFY"
     "$PY" -m venv "$COMFY/.venv"
     "$COMFY/.venv/bin/pip" install --upgrade pip
     "$COMFY/.venv/bin/pip" install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+  fi
+  if ! comfy_cuda; then
+    echo "不可用: ComfyUI 不能使用 CUDA" >&2
+    exit 1
+  fi
+  if req_satisfied "$COMFY/.venv/bin/python" "$COMFY/requirements.txt"; then
+    echo "已完成: ComfyUI 依赖"
+  else
+    echo "安装 ComfyUI 依赖: $COMFY"
     "$COMFY/.venv/bin/pip" install -r "$COMFY/requirements.txt"
   fi
-  if ! comfy_ok; then
-    echo "不可用: ComfyUI 不能使用 CUDA" >&2
+  if ! req_satisfied "$COMFY/.venv/bin/python" "$COMFY/requirements.txt"; then
+    echo "不可用: ComfyUI 依赖" >&2
     exit 1
   fi
   echo "可用: ComfyUI CUDA"
 fi
 
 echo "安装完成。代码目录 $ROOT ，Linux 端口 web=$WEB_PORT onlyoffice=$OO_PORT ollama=$OLLAMA_PORT comfyui=$COMFY_PORT hermes=$HERMES_PORT deepseek=$DEEPSEEK_PORT remote=$REMOTE_PORT guacd=$GUACD_PORT"
-echo "启动 $ROOT/server.py"
-cd "$ROOT"
-set -a
-. "$HERMES_HOME/env"
-set +a
-exec "$ROOT/.venv/bin/python" "$ROOT/server.py"
+echo "安装 supervisor"
+ensure_pkgs supervisor
+mkdir -p "$ROOT/data"
+sudo tee /etc/supervisor/conf.d/mafagent.conf >/dev/null <<EOF
+[program:mafagent]
+command=/bin/bash -lc "set -a; . '$HERMES_HOME/env'; set +a; exec '$PY' '$ROOT/server.py'"
+directory=$ROOT
+user=$(id -un)
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stdout_logfile=$ROOT/data/mafagent.log
+stdout_logfile_maxbytes=20MB
+redirect_stderr=true
+EOF
+sudo tee /usr/local/bin/start >/dev/null <<'EOF'
+#!/bin/sh
+if [ "$1" != "mafagent" ]; then
+  echo "未知服务: ${1-}" >&2
+  exit 1
+fi
+exec sudo supervisorctl start mafagent
+EOF
+sudo tee /usr/local/bin/stop >/dev/null <<'EOF'
+#!/bin/sh
+if [ "$1" != "mafagent" ]; then
+  echo "未知服务: ${1-}" >&2
+  exit 1
+fi
+exec sudo supervisorctl stop mafagent
+EOF
+sudo chmod 755 /usr/local/bin/start /usr/local/bin/stop
+sudo systemctl enable supervisor
+sudo systemctl restart supervisor
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl restart mafagent
+sudo supervisorctl status mafagent
+echo "可用: start mafagent"
+echo "可用: stop mafagent"

@@ -99,6 +99,8 @@ def _python(root: Path) -> Path:
 
 
 def available() -> bool:
+    if not load_config().comfyui_autostart:
+        return _running()
     if _running():
         return True
     return (ROOT / "main.py").is_file()
@@ -134,6 +136,8 @@ def _wait(proc: subprocess.Popen, timeout: float = 90.0) -> None:
 def start(workspace: str) -> None:
     global _proc
     if _running():
+        return
+    if not load_config().comfyui_autostart:
         return
     root = _root()
     python = _python(root)

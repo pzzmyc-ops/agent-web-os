@@ -301,6 +301,18 @@ async def move_conversation_folder(thread_id: str, request: Request):
     return JSONResponse(_conv_payload(store.current_thread(), ok=True))
 
 
+@router.post("/api/v1/conversations/{thread_id}/place")
+async def place_conversation(thread_id: str, request: Request):
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise RuntimeError("请求体不是对象")
+    anchor = str(body.get("anchorId") or "").strip()
+    if not anchor:
+        raise RuntimeError("缺少目标对话")
+    store.place_thread(thread_id, anchor, after=bool(body.get("after")))
+    return JSONResponse(_conv_payload(store.current_thread(), ok=True))
+
+
 # ---------------- history ----------------
 
 async def _running_task(thread_id: str) -> dict | None:

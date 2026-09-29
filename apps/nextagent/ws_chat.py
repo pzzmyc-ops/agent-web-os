@@ -256,16 +256,25 @@ async def _plain_notice_turn(store, thread_id: str, message_id: str, text: str) 
             _thread_active_tasks.pop(thread_id, None)
 
 
+def _official_deepseek(model: str) -> bool:
+    mid = (model or "").strip().lower()
+    return mid == "deepseek-official-flash" or mid == "deepseek-official-pro"
+
+
 def _apply_deepseek_api_key(text: str) -> None:
-    from appconfig import write_deepseek_api_key
-    from gateway.adapters.registry import reload_adapters
+    import urllib.request
+    from appconfig import load_config, write_deepseek_api_key
     import apps.nextagent.config as agent_config
-    from server import ensure_keyed_embedded
 
     write_deepseek_api_key(text)
     agent_config._cfg_cache = None
-    reload_adapters()
-    ensure_keyed_embedded()
+    cfg = load_config()
+    url = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1/admin/reload"
+    req = urllib.request.Request(url, data=b"{}", method="POST")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        if resp.status != 200:
+            raise RuntimeError("网关重新加载失败: HTTP " + str(resp.status))
 
 
 def _control(ev_type: str, data: dict, *, status: str = "ok") -> dict:
@@ -608,12 +617,11 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                 if not store.thread_exists(thread_id):
                     thread_id = store.ensure_initial_thread()
                 from appconfig import load_config
-                from gateway.adapters.registry import requires_official_deepseek_key
 
                 model = _thread_model(store, thread_id, data)
                 keyed = bool(str(load_config().deepseek_api_key or "").strip())
                 global _awaiting_deepseek_key
-                if not keyed and _awaiting_deepseek_key and requires_official_deepseek_key(model):
+                if not keyed and _awaiting_deepseek_key and _official_deepseek(model):
                     if thread_id in _thread_active_tasks:
                         await send(_control(
                             "message_rejected",
@@ -635,7 +643,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     continue
                 if not keyed and _awaiting_deepseek_key:
                     _awaiting_deepseek_key = False
-                if not keyed and requires_official_deepseek_key(model):
+                if not keyed and _official_deepseek(model):
                     if thread_id in _thread_active_tasks:
                         await send(_control(
                             "message_rejected",

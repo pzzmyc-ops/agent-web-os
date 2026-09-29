@@ -33,12 +33,7 @@ _proxy: ThreadingHTTPServer | None = None
 
 
 def available() -> bool:
-    if not AGENT_DIR.joinpath("run_agent.py").is_file() or not WEBUI_DIR.joinpath("server.py").is_file():
-        return False
-    if str(load_config().deepseek_api_key or "").strip():
-        return True
-    from gateway.adapters.registry import has_non_official_chat
-    return has_non_official_chat()
+    return AGENT_DIR.joinpath("run_agent.py").is_file() and WEBUI_DIR.joinpath("server.py").is_file()
 
 
 def embed_url() -> str:
@@ -175,21 +170,35 @@ def _port_taken(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _gateway_chat() -> tuple[str, list[str], str, str]:
-    from apps.nextagent.config import load_chat_models, load_config
+def _gateway_models() -> tuple[str, list[str], str, str]:
+    import urllib.request
+    from appconfig import load_config
 
     cfg = load_config()
-    ids = [str(item.get("id") or "").strip() for item in load_chat_models()]
-    ids = [item for item in ids if item]
-    want = (cfg.model or "").strip()
-    default = want if want in ids else (ids[0] if ids else "")
-    key = str(cfg.api_key or "").strip()
-    if not key:
-        raise RuntimeError("config.json 没有 api_key,Hermes 不能启动")
-    base = str(cfg.base_url or "").strip()
-    if not base:
-        raise RuntimeError("config.json 没有 base_url,Hermes 不能启动")
-    return default, ids, base, key
+    url = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1/models"
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list):
+        raise RuntimeError("网关模型列表格式不对")
+    ids = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if item.get("kind") not in (None, "", "llm"):
+            continue
+        mid = str(item.get("id") or "").strip()
+        if mid:
+            ids.append(mid)
+    if not ids:
+        raise RuntimeError("网关对话模型清单为空,Hermes 不能启动")
+    key = str(cfg.api_key or "").strip() or "local"
+    base = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1"
+    return ids[0], ids, base, key
+
+
+def _gateway_chat() -> tuple[str, list[str], str, str]:
+    return _gateway_models()
 
 
 def _apply_workspace(home: Path, workspace: str) -> None:

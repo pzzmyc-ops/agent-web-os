@@ -155,30 +155,46 @@ def list_chat_catalog() -> list[dict]:
             "description": a.catalog_description,
             "ui": a.ui_caps(pid),
         })
-    other = []
+    flash = []
     official = []
+    other = []
     for item in out:
-        if requires_official_deepseek_key(item["id"]):
+        if item["id"] == "deepseek-official-flash":
+            flash.append(item)
+        elif requires_official_deepseek_key(item["id"]):
             official.append(item)
         else:
             other.append(item)
-    return other + official
+    return flash + official + other
 
 
 def list_all_models() -> list[dict]:
     """列的是规范 id(route_id / model_id),不是路由表的小写键。
 
-    一个 adapter 常占多个路由键(别名 + 大小写变体),按键列会把同一个模型报好几遍。
+    文本模型顺序与 list_chat_catalog 相同,第一项是官方 DeepSeek。媒体模型排在后面。
     """
-    seen: set[int] = set()
     out: list[dict] = []
-    for key in sorted(CHAT.keys()):
-        adapter = CHAT[key]
-        if id(adapter) in seen:
+    seen: set[str] = set()
+    for item in list_chat_catalog():
+        mid = str(item.get("id") or "").strip()
+        if not mid or mid in seen:
             continue
-        seen.add(id(adapter))
-        out.append({"id": (adapter.route_id or key).strip(), "provider": adapter.provider, "kind": "llm"})
+        seen.add(mid)
+        out.append({
+            "id": mid,
+            "provider": item.get("provider") or "",
+            "kind": "llm",
+            "displayName": item.get("displayName") or mid,
+            "media_caps": item.get("media_caps") or {},
+            "context_window": item.get("context_window"),
+            "description": item.get("description") or "",
+            "ui": item.get("ui") or {},
+        })
     for key in sorted(MEDIA.keys()):
         media = MEDIA[key]
-        out.append({"id": (media.model_id or key).strip(), "provider": media.provider, "kind": "media"})
+        mid = (media.model_id or key).strip()
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        out.append({"id": mid, "provider": media.provider, "kind": "media"})
     return out

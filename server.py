@@ -222,10 +222,29 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(1)
 
     _process_task = asyncio.create_task(_process_ticker())
-    _start_embedded(cfg.fm_root_dir)
+
+    async def _start_embedded_when_gateway_up() -> None:
+        import urllib.request
+        url = f"http://127.0.0.1:{cfg.web_port}/api/llm-proxy/v1/models"
+        last = ""
+        for _ in range(50):
+            try:
+                with urllib.request.urlopen(url, timeout=1) as resp:
+                    resp.read()
+                break
+            except Exception as exc:
+                last = str(exc)
+                await asyncio.sleep(0.1)
+        else:
+            print("[embedded] 网关未就绪: " + last, flush=True)
+            return
+        _start_embedded(cfg.fm_root_dir)
+
+    _embedded_task = asyncio.create_task(_start_embedded_when_gateway_up())
 
     yield
 
+    _embedded_task.cancel()
     _stop_embedded()
     _process_task.cancel()
     _cron_task.cancel()

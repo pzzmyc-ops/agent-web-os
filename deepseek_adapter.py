@@ -84,12 +84,7 @@ _dsh_cookie = ""
 
 
 def available() -> bool:
-    if not BIN.is_file() or not DIST.is_file():
-        return False
-    if str(load_config().deepseek_api_key or "").strip():
-        return True
-    from gateway.adapters.registry import has_non_official_chat
-    return has_non_official_chat()
+    return BIN.is_file() and DIST.is_file()
 
 
 def embed_url() -> str:
@@ -281,20 +276,30 @@ def _cmd_path(path: Path) -> str:
 
 
 def _gateway_chat() -> tuple[str, list[str], str, str, str]:
-    from apps.nextagent.config import configured_gateway_base, load_chat_models, load_config
+    import urllib.request
+    from appconfig import load_config
 
     cfg = load_config()
-    ids = [str(item.get("id") or "").strip() for item in load_chat_models()]
-    ids = [item for item in ids if item]
-    want = (cfg.model or "").strip()
-    default = want if want in ids else (ids[0] if ids else "")
-    key = str(cfg.api_key or "").strip()
-    if not key:
-        raise RuntimeError("config.json 没有 api_key,DeepSeek Harness 不能启动")
-    base = str(cfg.base_url or "").strip()
-    if not base:
-        raise RuntimeError("config.json 没有 base_url,DeepSeek Harness 不能启动")
-    return default, ids, base, key, configured_gateway_base()
+    url = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1/models"
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list):
+        raise RuntimeError("网关模型列表格式不对")
+    ids = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if item.get("kind") not in (None, "", "llm"):
+            continue
+        mid = str(item.get("id") or "").strip()
+        if mid:
+            ids.append(mid)
+    if not ids:
+        raise RuntimeError("网关对话模型清单为空,DeepSeek Harness 不能启动")
+    key = str(cfg.api_key or "").strip() or "local"
+    base = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1"
+    return ids[0], ids, base, key, cfg.gateway_base
 
 
 def _adapt_skill_md(name: str, text: str, dest: Path, gateway_base: str, python: str, key: str) -> str:

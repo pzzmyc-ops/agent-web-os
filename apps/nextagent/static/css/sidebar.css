@@ -337,6 +337,14 @@
   width: 100%;
 }
 
+.sidebar-item-wrap.is-insert-before {
+  box-shadow: inset 0 2px 0 #2563eb;
+}
+
+.sidebar-item-wrap.is-insert-after {
+  box-shadow: inset 0 -2px 0 #2563eb;
+}
+
 
 
 .sidebar-item {
