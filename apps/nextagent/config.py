@@ -28,15 +28,17 @@ def _get_cfg():
 
 
 def load_chat_models() -> list[dict]:
-    """向 base_url 的 /models 要文本模型。不读 gateway 的内部注册表。"""
     import json
     import urllib.error
     import urllib.request
 
+    from gateway.adapters.registry import list_chat_catalog
+
     cfg = load_config()
     base = str(cfg.base_url or "").strip().rstrip("/")
-    if not base:
-        base = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1"
+    local = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1"
+    if base == local:
+        return list_chat_catalog()
     url = base + "/models"
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:

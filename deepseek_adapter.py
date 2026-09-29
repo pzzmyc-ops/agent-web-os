@@ -267,25 +267,12 @@ def _cmd_path(path: Path) -> str:
 
 
 def _gateway_chat() -> tuple[str, list[str], str, str, str]:
-    import urllib.request
     from appconfig import load_config
+    from gateway.adapters.registry import list_chat_catalog
 
     cfg = load_config()
-    url = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1/models"
-    with urllib.request.urlopen(url, timeout=10) as resp:
-        body = json.loads(resp.read().decode("utf-8"))
-    data = body.get("data") if isinstance(body, dict) else None
-    if not isinstance(data, list):
-        raise RuntimeError("网关模型列表格式不对")
-    ids = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        if item.get("kind") not in (None, "", "llm"):
-            continue
-        mid = str(item.get("id") or "").strip()
-        if mid:
-            ids.append(mid)
+    ids = [str(item.get("id") or "").strip() for item in list_chat_catalog()]
+    ids = [item for item in ids if item]
     if not ids:
         raise RuntimeError("网关对话模型清单为空,DeepSeek Harness 不能启动")
     key = str(cfg.api_key or "").strip() or "local"

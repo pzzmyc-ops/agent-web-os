@@ -62,7 +62,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fm.backend.mount import install_fm, mount_fm_frontend, start_fm_background
 from gateway.bootstrap import install_gateway
 from apps.nextagent.web_server import install_agent
-from embed_boot import wait_gateway
 import comfyui_adapter
 import deepseek_adapter
 import hermes_adapter
@@ -232,12 +231,7 @@ async def lifespan(app: FastAPI):
 
     _process_task = asyncio.create_task(_process_ticker())
 
-    async def _start_embedded_when_gateway_up() -> None:
-        url = f"http://127.0.0.1:{cfg.web_port}/api/llm-proxy/v1/models"
-        await wait_gateway(url)
-        await asyncio.to_thread(_start_embedded, cfg.fm_root_dir)
-
-    _embedded_task = asyncio.create_task(_start_embedded_when_gateway_up())
+    _embedded_task = asyncio.create_task(asyncio.to_thread(_start_embedded, cfg.fm_root_dir))
     _embedded_task.add_done_callback(_embedded_task_done)
 
     yield
