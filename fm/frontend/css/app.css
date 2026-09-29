@@ -496,3 +496,54 @@ button,input{font-family:inherit}
 .archive-table th:nth-child(3),.archive-table td:nth-child(3){width:160px}
 .archive-name{display:flex;align-items:center;gap:8px;min-width:0}
 .archive-name .lico{width:18px;height:18px;flex-shrink:0;background:center/contain no-repeat}
+.fop-dialog{
+  position:fixed;z-index:42000;width:448px;background:#fff;border:1px solid #c5c5c5;
+  box-shadow:0 8px 24px rgba(0,0,0,.28);padding:16px 18px 10px;color:#1b1b1b;
+  transform:translate(-50%,-50%);
+}
+.fop-title{font-size:14px;line-height:1.45;color:#1b1b1b}
+.fop-place{color:#0b6bcb;font-weight:600}
+.fop-head{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
+.fop-percent{font-size:13px}
+.fop-actions{display:flex;align-items:center;gap:2px}
+.fop-pause,.fop-close{
+  width:28px;height:28px;border:0;background:transparent;color:#333;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;padding:0;
+}
+.fop-pause[hidden],.fop-close[hidden]{display:none}
+.fop-pause:hover,.fop-close:hover{background:#f0f0f0}
+.fop-pause i{display:block;width:3px;height:12px;background:#333;margin:0 1px}
+.fop-pause.resume i{display:none}
+.fop-pause.resume::before{
+  content:"";border-style:solid;border-width:6px 0 6px 10px;
+  border-color:transparent transparent transparent #333;
+}
+.fop-close{font-size:18px;line-height:1}
+.fop-track{
+  position:relative;height:30px;margin-top:8px;border:1px solid #b7b7b7;overflow:hidden;
+  background-color:#f7f7f7;
+  background-image:repeating-linear-gradient(to bottom,rgba(90,170,90,.16) 0 2px,rgba(255,255,255,.8) 2px 4px);
+}
+.fop-track > i{
+  display:block;height:100%;width:0;
+  background:linear-gradient(#5ec864,#2f9e3a 55%,#248a30);
+}
+.fop-speed{
+  position:absolute;right:10px;top:0;height:30px;line-height:30px;font-size:13px;color:#222;
+}
+.fop-detail{margin-top:14px;font-size:13px;line-height:1.7;color:#333}
+.fop-detail .k{color:#666}
+.fop-detail div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fop-dialog.brief .fop-detail{display:none}
+.fop-dialog.is-error [data-v="name"]{color:#c42b1c;white-space:normal}
+.fop-more{
+  margin-top:8px;border:0;background:transparent;color:#333;cursor:pointer;padding:4px 0;
+  display:inline-flex;align-items:center;gap:6px;font-size:13px;
+}
+.fop-more::before{
+  content:"";border-style:solid;border-width:0 4px 5px 4px;
+  border-color:transparent transparent #666 transparent;
+}
+.fop-dialog.brief .fop-more::before{
+  border-width:5px 4px 0 4px;border-color:#666 transparent transparent transparent;
+}

@@ -30,7 +30,7 @@ class Config:
     ollama_url: str = "http://127.0.0.1:11434"
     embedding_model: str = "bge-m3"
     comfyui_port: int = 8188
-    comfyui_autostart: bool = True
+    comfyui_url: str = ""
     hermes_port: int = 18787
     hermes_embed_port: int = 18788
     deepseek_port: int = 13080
@@ -111,6 +111,12 @@ def load_config() -> Config:
     onlyoffice_url = str(pick("onlyoffice_url", ""))
     public_url = str(pick("public_url", ""))
     ollama_url = str(pick("ollama_url", "http://127.0.0.1:11434")).rstrip("/")
+    comfyui_url = str(pick("comfyui_url", "")).rstrip("/")
+    if comfyui_url:
+        from urllib.parse import urlparse
+        parsed = urlparse(comfyui_url)
+        if parsed.scheme != "http" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment:
+            raise RuntimeError("comfyui_url 必须是不带路径的 http 地址: " + comfyui_url)
     if os.name == "nt":
         comfyui_port = 8188 if raw.get("comfyui_port") is None else int(raw["comfyui_port"])
         hermes_port = 18787 if raw.get("hermes_port") is None else int(raw["hermes_port"])
@@ -154,7 +160,7 @@ def load_config() -> Config:
         ollama_url=ollama_url,
         embedding_model=str(pick("embedding_model", "bge-m3")),
         comfyui_port=comfyui_port,
-        comfyui_autostart=bool(raw.get("comfyui_autostart", True)),
+        comfyui_url=comfyui_url,
         hermes_port=hermes_port,
         hermes_embed_port=hermes_embed_port,
         deepseek_port=deepseek_port,

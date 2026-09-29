@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import http.client
 import json
-import os
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 from appconfig import load_config
 from embed_proxy import make_leaf_router, make_router
 
 PORT = load_config().comfyui_port
-UPSTREAM = "http://127.0.0.1:%s" % PORT
+UPSTREAM = load_config().comfyui_url or ("http://127.0.0.1:%s" % PORT)
 ROOT = Path(__file__).resolve().parent / "apps" / "comfyui"
 
 _PREFIX_PATCH = (
@@ -64,7 +65,10 @@ _proc: subprocess.Popen | None = None
 
 
 def _running() -> bool:
-    conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=0.5)
+    parsed = urlparse(UPSTREAM)
+    host = parsed.hostname
+    port = parsed.port if parsed.port is not None else 80
+    conn = http.client.HTTPConnection(host, port, timeout=0.5)
     try:
         conn.request("GET", "/system_stats")
         resp = conn.getresponse()
@@ -74,11 +78,11 @@ def _running() -> bool:
     finally:
         conn.close()
     if resp.status != 200:
-        raise RuntimeError("本机 %s 有服务但不是 ComfyUI: HTTP " % PORT + str(resp.status))
+        raise RuntimeError("%s 有服务但不是 ComfyUI: HTTP " % UPSTREAM + str(resp.status))
     body = json.loads(raw)
     version = body["system"]["comfyui_version"]
     if not version:
-        raise RuntimeError("本机 %s 返回了空的 ComfyUI 版本" % PORT)
+        raise RuntimeError("%s 返回了空的 ComfyUI 版本" % UPSTREAM)
     return True
 
 
@@ -88,18 +92,8 @@ def _root() -> Path:
     return ROOT
 
 
-def _python(root: Path) -> Path:
-    if os.name == "nt":
-        p = root / ".venv" / "Scripts" / "python.exe"
-    else:
-        p = root / ".venv" / "bin" / "python"
-    if not p.is_file():
-        raise RuntimeError("找不到 ComfyUI 虚拟环境: " + str(p))
-    return p
-
-
 def available() -> bool:
-    if not load_config().comfyui_autostart:
+    if load_config().comfyui_url:
         return _running()
     if _running():
         return True
@@ -135,14 +129,13 @@ def _wait(proc: subprocess.Popen, timeout: float = 90.0) -> None:
 
 def start(workspace: str) -> None:
     global _proc
+    if load_config().comfyui_url:
+        return
     if _running():
         return
-    if not load_config().comfyui_autostart:
-        return
     root = _root()
-    python = _python(root)
     _proc = subprocess.Popen(
-        [str(python), str(root / "main.py"), "--listen", "127.0.0.1", "--port", str(PORT)],
+        [sys.executable, str(root / "main.py"), "--listen", "127.0.0.1", "--port", str(PORT)],
         cwd=str(root),
     )
     _wait(_proc)

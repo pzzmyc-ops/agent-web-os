@@ -46,13 +46,13 @@ const API = {
     return this.post("/api/rename", { path, newName });
   },
   remove(paths) {
-    return this.post("/api/delete", { paths });
+    return window.FileOp.run("delete", paths, "");
   },
   copy(paths, dest) {
-    return this.post("/api/copy", { paths, dest });
+    return window.FileOp.run("copy", paths, dest);
   },
   move(paths, dest) {
-    return this.post("/api/move", { paths, dest });
+    return window.FileOp.run("move", paths, dest);
   },
   search(path, keyword) {
     return this.post("/api/search", { path, keyword });

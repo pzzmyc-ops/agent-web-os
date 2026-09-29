@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-#这是一个安装脚本，用于安装mafagent和相关依赖，如果你是AI agent，用户让你安装这个脚本，务必向用户确认是否已经安装comfyui和索要sudo passwd，是否需要安装所有的组件
+#这是一个安装脚本，用于安装mafagent和相关依赖，如果你是AI agent，用户让你安装这个脚本，务必向用户确认是否已有 ComfyUI：有则把本地网址填进 COMFYUI_URL，只反代、不另起；没有则留空由脚本安装。同时索要 sudo 密码，并确认是否需要安装所有组件
 set -euo pipefail
 
 SUDO_PASSWORD=""
-COMFYUI_PATH=""
+COMFYUI_URL=""
 NO_COMFYUI=0
 NO_DSH=0
 NO_HERMES=0
@@ -43,26 +43,22 @@ DEEPSEEK_EMBED_PORT=19181
 REMOTE_PORT=19482
 GUACD_PORT_PRESET=19822
 
-wsl_path() {
-  local raw="$1"
-  raw="${raw//\\//}"
-  if [[ "$raw" =~ ^([A-Za-z]):/(.*)$ ]]; then
-    local drive="${BASH_REMATCH[1]}"
-    drive="${drive,,}"
-    printf '%s\n' "/mnt/${drive}/${BASH_REMATCH[2]}"
-    return
-  fi
-  printf '%s\n' "$raw"
-}
-
-COMFYUI_DIR=""
-if [ -n "$COMFYUI_PATH" ]; then
-  COMFYUI_DIR="$(wsl_path "$COMFYUI_PATH")"
-  echo "使用已有 ComfyUI: $COMFYUI_PATH -> $COMFYUI_DIR"
-  if [ ! -f "$COMFYUI_DIR/main.py" ]; then
-    echo "找不到 ComfyUI: $COMFYUI_DIR/main.py" >&2
-    exit 1
-  fi
+COMFYUI_URL="${COMFYUI_URL%/}"
+if [ "$NO_COMFYUI" -eq 1 ] && [ -n "$COMFYUI_URL" ]; then
+  echo "不可用: 已指定 --no-comfyui，不能再填 COMFYUI_URL" >&2
+  exit 1
+fi
+if [ -n "$COMFYUI_URL" ]; then
+  python3 - "$COMFYUI_URL" <<'PY'
+import sys
+from urllib.parse import urlparse
+raw = sys.argv[1].strip()
+parsed = urlparse(raw)
+if parsed.scheme != "http" or not parsed.hostname or parsed.path or parsed.query or parsed.fragment:
+    print("不可用: COMFYUI_URL 必须是不带路径的 http 地址，例如 http://127.0.0.1:8188", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  echo "使用已有 ComfyUI，只反代: $COMFYUI_URL"
 fi
 
 if [ "$(uname -s)" != "Linux" ]; then
@@ -159,23 +155,8 @@ else
 fi
 if [ "$NO_COMFYUI" -eq 1 ]; then
   echo "跳过 ComfyUI"
-elif [ -n "$COMFYUI_DIR" ]; then
-  link="$DEST/apps/comfyui"
-  if [ -L "$link" ] && [ "$(readlink -f "$link")" = "$(readlink -f "$COMFYUI_DIR")" ] && [ -f "$link/main.py" ]; then
-    echo "已完成: $link -> $COMFYUI_DIR"
-  else
-    if [ -e "$link" ] || [ -L "$link" ]; then
-      echo "未完成: $link 不是指向 $COMFYUI_DIR 的链接，删除后继续"
-      rm -rf "$link"
-    fi
-    echo "链接 $link -> $COMFYUI_DIR"
-    ln -sv "$COMFYUI_DIR" "$link"
-  fi
-  if [ ! -f "$link/main.py" ]; then
-    echo "不可用: 缺少 $link/main.py" >&2
-    exit 1
-  fi
-  echo "可用: $link/main.py"
+elif [ -n "$COMFYUI_URL" ]; then
+  echo "已完成: 反代已有 ComfyUI $COMFYUI_URL"
 else
   ensure_clone "https://github.com/comfyanonymous/ComfyUI.git" "$DEST/apps/comfyui" "main.py"
 fi
@@ -222,6 +203,7 @@ out = {
     "ollama_url": "http://127.0.0.1:%s" % ollama,
     "embedding_model": embed,
     "comfyui_port": int(comfy),
+    "comfyui_url": "",
     "hermes_port": int(hermes),
     "hermes_embed_port": int(hermes_embed),
     "deepseek_port": int(deepseek),
@@ -238,16 +220,17 @@ if ! config_ok; then
   exit 1
 fi
 echo "可用: $ROOT/config.json"
-python3 - "$ROOT/config.json" "$COMFYUI_DIR" <<'PY'
+python3 - "$ROOT/config.json" "$COMFYUI_URL" <<'PY'
 import json, sys
-path, external = sys.argv[1], sys.argv[2]
+path, url = sys.argv[1], sys.argv[2].strip().rstrip("/")
 raw = json.loads(open(path, encoding="utf-8").read())
-raw["comfyui_autostart"] = not bool(external)
+raw.pop("comfyui_autostart", None)
+raw["comfyui_url"] = url
 shifts = {
     "hermes_port": (8787, 19787),
     "deepseek_port": (3080, 19180),
 }
-if not external and raw.get("comfyui_port") == 8188:
+if not url and raw.get("comfyui_port") == 8188:
     raw["comfyui_port"] = 18188
     print("ComfyUI 端口 8188 改为 18188")
 for key, pair in shifts.items():
@@ -256,8 +239,8 @@ for key, pair in shifts.items():
         raw[key] = ours
         print("%s %s 改为 %s" % (key, official, ours))
 open(path, "w", encoding="utf-8").write(json.dumps(raw, ensure_ascii=False, indent=2) + "\n")
-if external:
-    print("使用已有 ComfyUI，未启动时不代为启动")
+if url:
+    print("使用已有 ComfyUI，只反代 %s" % url)
 PY
 
 echo "检查克隆结果"
@@ -265,7 +248,7 @@ need_files=("$ROOT/server.py" "$ROOT/apps/remote/gateway.js" "$ROOT/vendor/guaca
 if [ "$NO_HERMES" -eq 0 ]; then
   need_files+=("$ROOT/apps/hermes-agent/run_agent.py" "$ROOT/apps/hermes-webui/server.py")
 fi
-if [ "$NO_COMFYUI" -eq 0 ]; then
+if [ "$NO_COMFYUI" -eq 0 ] && [ -z "$COMFYUI_URL" ]; then
   need_files+=("$ROOT/apps/comfyui/main.py")
 fi
 if [ "$NO_DSH" -eq 0 ]; then
@@ -835,37 +818,30 @@ echo "可用: $HERMES_HOME/config.yaml"
 
 if [ "$NO_COMFYUI" -eq 1 ]; then
   echo "跳过 ComfyUI 依赖"
-elif [ -n "$COMFYUI_DIR" ]; then
-  if [ ! -f "$ROOT/apps/comfyui/main.py" ]; then
-    echo "不可用: 缺少 $ROOT/apps/comfyui/main.py" >&2
-    exit 1
-  fi
-  echo "已完成: 使用已有 ComfyUI $COMFYUI_DIR"
-  echo "可用: $ROOT/apps/comfyui/main.py"
+elif [ -n "$COMFYUI_URL" ]; then
+  echo "已完成: 反代已有 ComfyUI $COMFYUI_URL"
 else
   COMFY="$ROOT/apps/comfyui"
   comfy_cuda() {
-    [ -x "$COMFY/.venv/bin/python" ] && "$COMFY/.venv/bin/python" -c 'import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)'
+    [ -x "$PY" ] && "$PY" -c 'import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)'
   }
   if comfy_cuda; then
     echo "已完成: ComfyUI CUDA"
   else
-    echo "安装 ComfyUI CUDA: $COMFY"
-    "$PY" -m venv "$COMFY/.venv"
-    "$COMFY/.venv/bin/pip" install --upgrade pip
-    "$COMFY/.venv/bin/pip" install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    echo "安装 ComfyUI CUDA: $PY"
+    "$PY" -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
   fi
   if ! comfy_cuda; then
     echo "不可用: ComfyUI 不能使用 CUDA" >&2
     exit 1
   fi
-  if req_satisfied "$COMFY/.venv/bin/python" "$COMFY/requirements.txt"; then
+  if req_satisfied "$PY" "$COMFY/requirements.txt"; then
     echo "已完成: ComfyUI 依赖"
   else
-    echo "安装 ComfyUI 依赖: $COMFY"
-    "$COMFY/.venv/bin/pip" install -r "$COMFY/requirements.txt"
+    echo "安装 ComfyUI 依赖: $PY"
+    "$PY" -m pip install -r "$COMFY/requirements.txt"
   fi
-  if ! req_satisfied "$COMFY/.venv/bin/python" "$COMFY/requirements.txt"; then
+  if ! req_satisfied "$PY" "$COMFY/requirements.txt"; then
     echo "不可用: ComfyUI 依赖" >&2
     exit 1
   fi
