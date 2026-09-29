@@ -97,15 +97,6 @@ def _rewrite_web(raw: bytes, ctype: str) -> bytes:
         return raw
     text = raw.decode("utf-8")
     text = text.replace('<base href="/">', '<base href="/deepseek/">')
-    text = text.replace('const API_PATH = "/api"', 'const API_PATH = "/deepseek/api"')
-    text = text.replace('"/plugins/', '"/deepseek/plugins/')
-    text = text.replace("'/plugins/", "'/deepseek/plugins/")
-    text = text.replace('"/assets/', '"/deepseek/assets/')
-    text = text.replace("'/assets/", "'/deepseek/assets/")
-    text = text.replace("url(/assets/", "url(/deepseek/assets/")
-    text = text.replace('"/api/', '"/deepseek/api/')
-    text = text.replace("'/api/", "'/deepseek/api/")
-    text = text.replace("`/api/", "`/deepseek/api/")
     if "html" in low:
         marker = "<head>"
         if marker not in text:
