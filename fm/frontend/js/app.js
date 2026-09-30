@@ -169,6 +169,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   DesktopOS.install();
   TransferHub.init();
   await FMLoadEnv();
+  FileOp.restore().catch((err) => toast(err.message || String(err)));
   Desktop.init();
   StartMenu.init();
   Session.init();

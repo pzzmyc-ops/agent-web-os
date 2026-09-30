@@ -6,7 +6,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from fm.backend.fileop import create_job, same_volume, volume_label
+from fm.backend.fileop import STORE, SpeedCurve, create_job, same_volume, volume_label
 from fm.backend.pathutil import IS_WINDOWS, to_fs
 
 
@@ -138,6 +138,58 @@ class FileOpTests(unittest.TestCase):
         drive = os.path.splitdrive(os.path.abspath(self.root))[0] + "\\"
         with self.assertRaises(ValueError):
             create_job("delete", [to_fs(drive)])
+
+    def test_paused_job_keeps_chart_for_restore(self):
+        job = create_job("copy", [self.fs(self.src)], self.fs(self.dst))
+        job.phase = "run"
+        job.total_bytes = 1000
+        job.status = "running"
+        for _ in range(6):
+            job._add_bytes(100, "a.txt")
+            time.sleep(0.3)
+        job.last_eta = 40
+        job.status = "paused"
+        snap = job.public(chart=True)
+        self.assertEqual(snap["status"], "paused")
+        self.assertEqual(snap["etaSeconds"], 40)
+        self.assertGreater(len(snap["chart"]), 0)
+        self.assertTrue(snap["refreshPaths"])
+        STORE.jobs[job.id] = job
+        STORE.order.append(job.id)
+        self.addCleanup(lambda: (STORE.jobs.pop(job.id, None), STORE.order.remove(job.id) if job.id in STORE.order else None))
+        listed = STORE.active()
+        self.assertEqual(listed[0]["id"], job.id)
+        self.assertGreater(len(listed[0]["chart"]), 0)
+
+    def test_speed_curve_waits_then_uses_slope(self):
+        curve = SpeedCurve()
+        for index in range(5):
+            curve.add(index * 0.5, index * 500)
+        self.assertIsNone(curve.eta_seconds(10000))
+        self.assertGreater(curve.display_speed(), 0)
+        steady = SpeedCurve()
+        for index in range(20):
+            steady.add(index * 0.5, index * 500)
+        eta = steady.eta_seconds(5000)
+        self.assertIsNotNone(eta)
+        self.assertAlmostEqual(eta, 5.0, delta=0.6)
+
+    def test_speed_curve_rejects_unstable_rate(self):
+        curve = SpeedCurve()
+        done = 0
+        for index in range(20):
+            done += 100 if index < 14 else 2000
+            curve.add(index * 0.5, done)
+        self.assertIsNone(curve.eta_seconds(10000))
+
+    def test_speed_curve_reset_drops_history(self):
+        curve = SpeedCurve()
+        for index in range(20):
+            curve.add(float(index), float(index * 1000))
+        curve.reset()
+        curve.add(100.0, 0)
+        curve.add(101.0, 1000)
+        self.assertIsNone(curve.eta_seconds(1000))
 
     @unittest.skipUnless(IS_WINDOWS, "volume label is a Windows path")
     def test_volume_label_contains_drive_letter(self):
