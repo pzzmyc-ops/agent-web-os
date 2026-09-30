@@ -584,3 +584,5 @@ button,input{font-family:inherit}
   min-width:80px;height:26px;border:1px solid #adadad;background:#e1e1e1;cursor:pointer;font-size:12px;color:#1a1a1a;
 }
 .fop-conflict-cancel:hover{background:#e5f1fb;border-color:#0078d7}
+.terminal-dialog .win-body{background:#012456}
+.term-host{flex:1;min-height:0;background:#012456}

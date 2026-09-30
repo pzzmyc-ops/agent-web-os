@@ -869,11 +869,16 @@ function openExplorer(startPath = "/") {
         ["新建文件", () => action("mkfile")],
         ["上传文件", () => action("upload")],
         ["-", null],
+        ["在此处打开终端", () => FMTerminal.open(state.path)],
+        ["-", null],
         ["图标视图", () => action("view-icon")],
         ["列表视图", () => action("view-list")],
       ];
     } else if (items.length === 1) {
       buttons.push(["打开", () => openItem(items[0])]);
+      if (items[0].type === "folder") {
+        buttons.push(["在此处打开终端", () => FMTerminal.open(items[0].path)]);
+      }
       if (items[0].type === "file") {
         const apps = kodApp.listByExt(items[0].ext);
         if (apps.length) {
