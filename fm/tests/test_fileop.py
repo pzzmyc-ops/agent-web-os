@@ -259,6 +259,31 @@ class FileOpTests(unittest.TestCase):
         curve.add(2.0, 2 * 1024 * 1024)
         self.assertGreater(curve.current_speed(), 0)
 
+    def test_dense_chunks_keep_speed_and_eta(self):
+        curve = SpeedCurve()
+        done = 0
+        for index in range(600):
+            done += 1024 * 1024
+            curve.add(index * 0.01, done)
+        self.assertGreater(len(curve.points), 2)
+        self.assertGreater(curve.display_speed(), 0)
+        self.assertGreater(curve.current_speed(), 0)
+        eta = curve.eta_seconds(1024 * 1024 * 1024)
+        self.assertIsNotNone(eta)
+        self.assertGreater(eta, 0)
+
+    def test_dense_job_writes_report_speed(self):
+        job = create_job("copy", [self.fs(os.path.join(self.src, "a.txt"))], self.fs(self.dst))
+        job.phase = "run"
+        job.status = "running"
+        job.total_bytes = 64 * 1024 * 1024
+        for _ in range(60):
+            job._add_bytes(256 * 1024, "a.bin")
+            time.sleep(0.02)
+        snap = job.public(chart=True)
+        self.assertGreater(snap["speed"], 0)
+        self.assertGreater(len(snap["chart"]), 0)
+
     def test_eta_appears_after_history_even_when_rate_changes(self):
         curve = SpeedCurve()
         done = 0

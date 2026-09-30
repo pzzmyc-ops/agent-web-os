@@ -177,7 +177,7 @@ class SpeedCurve:
         self.points = []
 
     def add(self, now: float, done_bytes: int) -> None:
-        if self.points and now - self.points[-1][0] < 0.25:
+        if len(self.points) >= 2 and now - self.points[-2][0] < 0.25:
             self.points[-1] = (now, done_bytes)
             return
         self.points.append((now, done_bytes))

@@ -185,8 +185,6 @@ const FileOp = {
     let lastFrac = 0;
     let lastSpeed = 0;
     let lastEta = null;
-    let seenBytes = -1;
-    let seenAt = 0;
     const captionEl = root.querySelector(".fop-caption-text");
     const titleEl = root.querySelector(".fop-title");
     const percentEl = root.querySelector(".fop-percent");
@@ -337,17 +335,7 @@ const FileOp = {
     function noteSample(next) {
       if (next.phase !== "run" || next.status !== "running") return;
       const frac = fileOpFraction(next);
-      const now = performance.now();
-      const bytes = next.totalBytes > 0 ? (next.doneBytes || 0) : 0;
-      let speed = next.speed || 0;
-      if (seenBytes >= 0 && bytes > seenBytes && now > seenAt) {
-        const local = (bytes - seenBytes) / ((now - seenAt) / 1000);
-        if (!(speed > 0)) speed = local;
-      }
-      if (next.totalBytes > 0) {
-        seenBytes = bytes;
-        seenAt = now;
-      }
+      const speed = next.speed || 0;
       if (speed > 0) lastSpeed = speed;
       if (frac > lastFrac && speed > 0) {
         samples.push({ from: lastFrac, to: frac, speed });
