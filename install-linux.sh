@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-#这是一个安装脚本，用于安装mafagent和相关依赖。启动、安装、维护只认 config.json：Windows 读不带前缀的键，Linux 读 linux_ 前缀。已有 ComfyUI 则填写对应的 comfyui_url 或 linux_comfyui_url，只反代、不另起；留空才安装。如果你是 AI agent，先向用户确认这份配置、索要 sudo 密码，并确认是否需要安装所有组件
+#这是一个安装脚本，用于安装mafagent和相关依赖。启动、安装、维护只认 config.json：Windows 读不带前缀的键，Linux 读 linux_ 前缀。已有 ComfyUI 则填写对应的 comfyui_url 或 linux_comfyui_url，只反代、不另起；留空才安装。下载走代理时在 PROXY 填写 http 代理，留空则直连。如果你是 AI agent，先向用户确认这份配置、代理、sudo 密码，并确认是否需要安装所有组件
 set -euo pipefail
 
 SUDO_PASSWORD=""
+PROXY=""
 NO_COMFYUI=0
 NO_DSH=0
 NO_HERMES=0
@@ -78,11 +79,48 @@ cleanup() {
   if [ -n "$GUAC_SRC" ]; then
     rm -rf "$GUAC_SRC"
   fi
+  if [ -n "$PROXY" ]; then
+    command sudo -A rm -f /etc/apt/apt.conf.d/99mafagent-proxy
+  fi
 }
 trap cleanup EXIT
 sudo() {
-  command sudo -A DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a "$@"
+  if [ -n "$PROXY" ]; then
+    command sudo -A \
+      DEBIAN_FRONTEND=noninteractive \
+      NEEDRESTART_MODE=a \
+      http_proxy="$PROXY" \
+      https_proxy="$PROXY" \
+      HTTP_PROXY="$PROXY" \
+      HTTPS_PROXY="$PROXY" \
+      all_proxy="$PROXY" \
+      ALL_PROXY="$PROXY" \
+      no_proxy="$NO_PROXY" \
+      NO_PROXY="$NO_PROXY" \
+      "$@"
+  else
+    command sudo -A DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a "$@"
+  fi
 }
+if [ -n "$PROXY" ]; then
+  python3 - "$PROXY" <<'PY'
+import sys
+from urllib.parse import urlparse
+raw = sys.argv[1].strip()
+parsed = urlparse(raw)
+if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.path not in ("", "/") or any(ch in raw for ch in " \t\r\n\""):
+    print("不可用: PROXY 必须是不带路径的 http 代理，例如 http://127.0.0.1:7890", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  export http_proxy="$PROXY" https_proxy="$PROXY" HTTP_PROXY="$PROXY" HTTPS_PROXY="$PROXY"
+  export all_proxy="$PROXY" ALL_PROXY="$PROXY"
+  export no_proxy="127.0.0.1,localhost,::1" NO_PROXY="127.0.0.1,localhost,::1"
+  sudo tee /etc/apt/apt.conf.d/99mafagent-proxy >/dev/null <<EOF
+Acquire::http::Proxy "${PROXY}";
+Acquire::https::Proxy "${PROXY}";
+EOF
+  echo "使用代理: $PROXY"
+fi
 
 BOOT="$(cd "$(dirname "$0")" && pwd)"
 DEST="$HOME/mafagent"
@@ -569,7 +607,13 @@ if ! systemctl cat ollama.service >/dev/null 2>&1; then
 fi
 echo "可用: $(command -v ollama)"
 sudo mkdir -p /etc/systemd/system/ollama.service.d
-printf '[Service]\nEnvironment="OLLAMA_HOST=127.0.0.1:%s"\n' "$OLLAMA_PORT" | sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null
+{
+  printf '[Service]\nEnvironment="OLLAMA_HOST=127.0.0.1:%s"\n' "$OLLAMA_PORT"
+  if [ -n "$PROXY" ]; then
+    printf 'Environment="http_proxy=%s"\nEnvironment="https_proxy=%s"\nEnvironment="HTTP_PROXY=%s"\nEnvironment="HTTPS_PROXY=%s"\nEnvironment="all_proxy=%s"\nEnvironment="ALL_PROXY=%s"\nEnvironment="no_proxy=%s"\nEnvironment="NO_PROXY=%s"\n' \
+      "$PROXY" "$PROXY" "$PROXY" "$PROXY" "$PROXY" "$PROXY" "$NO_PROXY" "$NO_PROXY"
+  fi
+} | sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable --now ollama
 if ! listen "$OLLAMA_PORT"; then
@@ -849,6 +893,18 @@ EOF
 sudo chmod 755 /usr/local/bin/start /usr/local/bin/stop
 sudo systemctl enable supervisor
 sudo systemctl restart supervisor
+i=0
+while [ "$i" -lt 30 ]; do
+  if [ -S /run/supervisor.sock ]; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 0.2
+done
+if [ ! -S /run/supervisor.sock ]; then
+  echo "不可用: /run/supervisor.sock 没有出现" >&2
+  exit 1
+fi
 sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl restart mafagent
