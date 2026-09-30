@@ -48,6 +48,23 @@ class _WinPty:
         self.proc.close(force=True)
 
 
+def posix_shell_env() -> dict:
+    env = os.environ.copy()
+    if not env.get("HOME"):
+        env["HOME"] = _passwd_home()
+    if not env.get("USER"):
+        import getpass
+        env["USER"] = getpass.getuser()
+    if not env.get("LOGNAME"):
+        env["LOGNAME"] = env["USER"]
+    return env
+
+
+def _passwd_home() -> str:
+    import pwd
+    return pwd.getpwuid(os.getuid()).pw_dir
+
+
 class _PosixPty:
     def __init__(self, folder: str, rows: int, cols: int):
         import fcntl
@@ -64,6 +81,7 @@ class _PosixPty:
             stdout=slave,
             stderr=slave,
             cwd=folder,
+            env=posix_shell_env(),
             start_new_session=True,
         )
         os.close(slave)

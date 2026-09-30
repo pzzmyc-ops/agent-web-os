@@ -4,12 +4,13 @@ import threading
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from fm.backend.pathutil import IS_WINDOWS
-from fm.backend.terminal import open_shell, router
+from fm.backend.terminal import open_shell, posix_shell_env, router
 
 
 def terminal_app():
@@ -140,6 +141,12 @@ class TerminalTests(unittest.TestCase):
         self.assertTrue(process_alive(pid))
         session.close()
         wait_dead(pid)
+
+    def test_posix_shell_env_fills_home_when_missing(self):
+        with patch.dict(os.environ, {"HOME": ""}, clear=False):
+            with patch("fm.backend.terminal._passwd_home", return_value="/home/hhy"):
+                env = posix_shell_env()
+        self.assertEqual(env["HOME"], "/home/hhy")
 
     def test_home_is_the_user_directory(self):
         with TestClient(terminal_app()) as client:
