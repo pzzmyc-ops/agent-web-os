@@ -53,8 +53,9 @@ function fileOpEta(task) {
 }
 
 function layoutFileOps() {
-  const nodes = [...document.querySelectorAll(".fop-dialog")];
+  const nodes = [...document.querySelectorAll(".fop-dialog")].filter((node) => node.dataset.moved !== "1");
   nodes.forEach((node, index) => {
+    node.style.transform = "translate(-50%, -50%)";
     node.style.left = "calc(50% + " + (index * 18) + "px)";
     node.style.top = "calc(40% + " + (index * 26) + "px)";
   });
@@ -83,7 +84,7 @@ const FileOp = {
       '<button type="button" class="fop-close" data-act="close" title="取消">×</button>',
       "</span>",
       "</div>",
-      '<div class="fop-track"><i></i><span class="fop-speed"></span></div>',
+      '<div class="fop-bar-row"><div class="fop-track"><i></i></div><span class="fop-speed"></span></div>',
       '<div class="fop-detail">',
       '<div><span class="k" data-k="name">名称:</span> <span data-v="name"></span></div>',
       '<div data-row="eta"><span class="k">剩余时间:</span> <span data-v="eta"></span></div>',
@@ -240,8 +241,38 @@ const FileOp = {
       brief = !brief;
       root.classList.toggle("brief", brief);
       briefBtn.textContent = brief ? "详细信息" : "简略信息";
-      layoutFileOps();
     };
+    titleEl.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      const rect = root.getBoundingClientRect();
+      const ox = e.clientX - rect.left;
+      const oy = e.clientY - rect.top;
+      root.dataset.moved = "1";
+      root.style.transform = "none";
+      root.style.left = rect.left + "px";
+      root.style.top = rect.top + "px";
+      titleEl.setPointerCapture(e.pointerId);
+      function move(ev) {
+        if (ev.pointerId !== e.pointerId) return;
+        let left = ev.clientX - ox;
+        let top = ev.clientY - oy;
+        const maxL = Math.max(0, window.innerWidth - root.offsetWidth);
+        const maxT = Math.max(0, window.innerHeight - root.offsetHeight);
+        if (left < 0) left = 0;
+        if (top < 0) top = 0;
+        if (left > maxL) left = maxL;
+        if (top > maxT) top = maxT;
+        root.style.left = left + "px";
+        root.style.top = top + "px";
+      }
+      function up(ev) {
+        if (ev.pointerId !== e.pointerId) return;
+        titleEl.removeEventListener("pointermove", move);
+        titleEl.removeEventListener("pointerup", up);
+      }
+      titleEl.addEventListener("pointermove", move);
+      titleEl.addEventListener("pointerup", up);
+    });
     paint(task);
     pollTimer = setTimeout(poll, 200);
   },

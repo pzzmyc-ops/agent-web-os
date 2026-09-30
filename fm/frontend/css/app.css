@@ -501,7 +501,7 @@ button,input{font-family:inherit}
   box-shadow:0 8px 24px rgba(0,0,0,.28);padding:16px 18px 10px;color:#1b1b1b;
   transform:translate(-50%,-50%);
 }
-.fop-title{font-size:14px;line-height:1.45;color:#1b1b1b}
+.fop-title{font-size:14px;line-height:1.45;color:#1b1b1b;cursor:move;touch-action:none}
 .fop-place{color:#0b6bcb;font-weight:600}
 .fop-head{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
 .fop-percent{font-size:13px}
@@ -519,18 +519,10 @@ button,input{font-family:inherit}
   border-color:transparent transparent transparent #333;
 }
 .fop-close{font-size:18px;line-height:1}
-.fop-track{
-  position:relative;height:30px;margin-top:8px;border:1px solid #b7b7b7;overflow:hidden;
-  background-color:#f7f7f7;
-  background-image:repeating-linear-gradient(to bottom,rgba(90,170,90,.16) 0 2px,rgba(255,255,255,.8) 2px 4px);
-}
-.fop-track > i{
-  display:block;height:100%;width:0;
-  background:linear-gradient(#5ec864,#2f9e3a 55%,#248a30);
-}
-.fop-speed{
-  position:absolute;right:10px;top:0;height:30px;line-height:30px;font-size:13px;color:#222;
-}
+.fop-bar-row{display:flex;align-items:center;gap:12px;margin-top:10px}
+.fop-track{flex:1;height:14px;background:#e6e6e6;border-radius:2px;overflow:hidden}
+.fop-track > i{display:block;height:100%;width:0;background:#2ea043}
+.fop-speed{flex-shrink:0;font-size:13px;color:#222;white-space:nowrap}
 .fop-detail{margin-top:14px;font-size:13px;line-height:1.7;color:#333}
 .fop-detail .k{color:#666}
 .fop-detail div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
