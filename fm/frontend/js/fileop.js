@@ -54,13 +54,44 @@ function fileOpFraction(task) {
   return 0;
 }
 
-function fileOpNiceStep(raw) {
-  const mag = 10 ** Math.floor(Math.log(raw) / Math.LN10);
-  const candidates = [1, 2, 5, 10];
+function fileOpGridStep(range) {
+  const limit = range / 5;
+  const mag = 10 ** Math.floor(Math.log(limit) / Math.LN10);
+  const candidates = [5, 2, 1];
   for (let i = 0; i < candidates.length; i += 1) {
-    if (candidates[i] * mag >= raw) return candidates[i] * mag;
+    if (candidates[i] * mag <= limit) return candidates[i] * mag;
   }
-  return 10 * mag;
+  return mag / 2;
+}
+
+function fileOpChartBand(samples, speed) {
+  let low = Infinity;
+  let high = 0;
+  const consider = (value) => {
+    if (!(value > 0)) return;
+    if (value < low) low = value;
+    if (value > high) high = value;
+  };
+  (samples || []).forEach((sample) => consider(sample.speed));
+  consider(speed);
+  if (!(high > 0)) return null;
+  const span = high - low;
+  if (span <= high * 0.02) {
+    const bottom = high * 0.5;
+    const top = high * 1.5;
+    return { bottom, top, step: fileOpGridStep(top - bottom) };
+  }
+  const margin = (span * 3) / 14;
+  const bottom = low - margin;
+  const top = high + margin;
+  return { bottom, top, step: fileOpGridStep(top - bottom) };
+}
+
+function fileOpChartHeight(band, speed) {
+  if (!band) return 0;
+  const range = band.top - band.bottom;
+  if (range <= 0) return 0;
+  return Math.max(0, Math.min(1, (speed - band.bottom) / range));
 }
 
 function layoutFileOps() {
@@ -152,12 +183,10 @@ const FileOp = {
     let closed = false;
     const samples = [];
     let lastFrac = 0;
-    let peak = 0;
-    let axisMax = 0;
-    let axisStep = 0;
-    let speedClock = 0;
     let lastSpeed = 0;
     let lastEta = null;
+    let seenBytes = -1;
+    let seenAt = 0;
     const captionEl = root.querySelector(".fop-caption-text");
     const titleEl = root.querySelector(".fop-title");
     const percentEl = root.querySelector(".fop-percent");
@@ -233,10 +262,6 @@ const FileOp = {
     }
     (task.chart || []).forEach((sample) => samples.push(sample));
     if (samples.length) lastFrac = samples[samples.length - 1].to;
-    if (task.axisMax) {
-      axisMax = task.axisMax;
-      axisStep = task.axisStep || 0;
-    }
     if (task.etaSeconds != null) lastEta = task.etaSeconds;
     if (task.speed > 0) lastSpeed = task.speed;
     else if (samples.length) lastSpeed = samples[samples.length - 1].speed;
@@ -254,14 +279,14 @@ const FileOp = {
       ctx.clearRect(0, 0, w, h);
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, w, h);
-      const scale = axisMax > 0 ? axisMax : (peak > 0 ? peak * 1.1 : 1);
-      const lineY = lastSpeed > 0 ? h - Math.min(1, lastSpeed / scale) * h : h;
+      const band = fileOpChartBand(samples, lastSpeed);
+      const lineY = lastSpeed > 0 ? h - fileOpChartHeight(band, lastSpeed) * h : h;
       const light = pausedNow ? "#f3e6a3" : "#b6e7b6";
       const dark = pausedNow ? "#d3b23a" : "#2fbe44";
       samples.forEach((sample) => {
         const x0 = Math.floor(sample.from * w);
         let x1 = Math.ceil(sample.to * w);
-        const top = h - Math.min(1, sample.speed / scale) * h;
+        const top = h - fileOpChartHeight(band, sample.speed) * h;
         if (x1 <= x0) x1 = x0 + 1;
         if (top < lineY) {
           ctx.fillStyle = light;
@@ -276,9 +301,11 @@ const FileOp = {
       ctx.strokeStyle = pausedNow ? "rgba(170, 140, 30, .22)" : "rgba(0, 0, 0, .10)";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      if (axisStep > 0) {
-        for (let level = axisStep; level < scale; level += axisStep) {
-          const gy = Math.round(h - (level / scale) * h) + 0.5;
+      if (band) {
+        const first = Math.ceil(band.bottom / band.step) * band.step;
+        for (let level = first; level < band.top; level += band.step) {
+          if (level <= 0) continue;
+          const gy = Math.round(h - fileOpChartHeight(band, level) * h) + 0.5;
           ctx.moveTo(0, gy);
           ctx.lineTo(w, gy);
         }
@@ -308,30 +335,20 @@ const FileOp = {
     }
 
     function noteSample(next) {
-      if (next.axisMax) {
-        axisMax = next.axisMax;
-        axisStep = next.axisStep || 0;
-      }
       if (next.phase !== "run" || next.status !== "running") return;
       const frac = fileOpFraction(next);
-      const speed = next.speed || 0;
-      if (speed > 0) {
-        const now = performance.now();
-        if (!speedClock) speedClock = now;
-        if (speed > peak) peak = speed;
-        if (!axisMax && now - speedClock >= 1000) {
-          const target = peak * 1.1;
-          let step = fileOpNiceStep(target / 8);
-          let max = Math.ceil(target / step) * step;
-          if (max / step < 6) {
-            step = fileOpNiceStep(target / 10);
-            max = Math.ceil(target / step) * step;
-          }
-          axisStep = step;
-          axisMax = max;
-        }
-        lastSpeed = speed;
+      const now = performance.now();
+      const bytes = next.totalBytes > 0 ? (next.doneBytes || 0) : 0;
+      let speed = next.speed || 0;
+      if (seenBytes >= 0 && bytes > seenBytes && now > seenAt) {
+        const local = (bytes - seenBytes) / ((now - seenAt) / 1000);
+        if (!(speed > 0)) speed = local;
       }
+      if (next.totalBytes > 0) {
+        seenBytes = bytes;
+        seenAt = now;
+      }
+      if (speed > 0) lastSpeed = speed;
       if (frac > lastFrac && speed > 0) {
         samples.push({ from: lastFrac, to: frac, speed });
         lastFrac = frac;

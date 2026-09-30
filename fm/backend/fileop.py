@@ -1,5 +1,4 @@
 import ctypes
-import math
 import os
 import re
 import shutil
@@ -226,40 +225,30 @@ class SpeedCurve:
             return 0.0
         if self.points[-1][0] - self.points[0][0] < 0.4:
             return 0.0
-        return self._slope(1)
+        recent = self._slope(1)
+        if recent > 0:
+            return recent
+        prev_t, prev_b = self.points[-2]
+        end_t, end_b = self.points[-1]
+        dt = end_t - prev_t
+        if dt <= 0:
+            return 0.0
+        return max(0.0, (end_b - prev_b) / dt)
 
     def eta_seconds(self, remaining: int):
         if remaining <= 0:
             return 0.0
-        if len(self.points) < 3:
+        if len(self.points) < 2:
             return None
-        if self.points[-1][0] - self.points[0][0] < 8:
+        span = self.points[-1][0] - self.points[0][0]
+        if span < 3:
             return None
-        long_slope = self._regression()
-        short_slope = self._slope(3)
-        if long_slope <= 0 or short_slope <= 0:
+        slope = self._regression() if span >= 8 else self._slope(span)
+        if slope <= 0:
+            slope = self.current_speed()
+        if slope <= 0:
             return None
-        if abs(short_slope - long_slope) / long_slope > 0.5:
-            return None
-        return remaining / long_slope
-
-
-def _nice_step(raw: float) -> float:
-    mag = 10 ** math.floor(math.log10(raw))
-    for factor in (1, 2, 5, 10):
-        if factor * mag >= raw:
-            return factor * mag
-    return 10 * mag
-
-
-def _lock_axis(peak_speed: float):
-    target = peak_speed * 1.1
-    step = _nice_step(target / 8)
-    maximum = math.ceil(target / step) * step
-    if maximum / step < 6:
-        step = _nice_step(target / 10)
-        maximum = math.ceil(target / step) * step
-    return step, maximum
+        return remaining / slope
 
 
 class Job:
@@ -292,10 +281,6 @@ class Job:
         self.curve = SpeedCurve()
         self.chart = []
         self.chart_mark = 0.0
-        self.axis_max = 0.0
-        self.axis_step = 0.0
-        self.peak = 0.0
-        self.run_mark = 0.0
         self.last_eta = None
         self.policy = ""
         self.conflicts = []
@@ -351,8 +336,6 @@ class Job:
                 "etaSeconds": eta,
                 "error": self.error,
                 "percent": percent,
-                "axisMax": self.axis_max,
-                "axisStep": self.axis_step,
                 "refreshPaths": list(self.changed),
                 "conflictCount": len(self.conflicts),
                 "conflictNames": list(self.conflict_names),
@@ -473,12 +456,6 @@ class Job:
             return
         now = time.monotonic()
         speed = self.curve.current_speed()
-        if self.run_mark <= 0:
-            self.run_mark = now
-        if speed > self.peak:
-            self.peak = speed
-        if self.axis_max <= 0 and self.peak > 0 and now - self.run_mark >= 1:
-            self.axis_step, self.axis_max = _lock_axis(self.peak)
         if speed <= 0:
             return
         if self.total_bytes > 0:

@@ -253,13 +253,50 @@ class FileOpTests(unittest.TestCase):
         self.assertIsNotNone(eta)
         self.assertAlmostEqual(eta, 5.0, delta=0.6)
 
-    def test_speed_curve_rejects_unstable_rate(self):
+    def test_sparse_samples_still_have_speed(self):
+        curve = SpeedCurve()
+        curve.add(0.0, 0)
+        curve.add(2.0, 2 * 1024 * 1024)
+        self.assertGreater(curve.current_speed(), 0)
+
+    def test_eta_appears_after_history_even_when_rate_changes(self):
         curve = SpeedCurve()
         done = 0
         for index in range(20):
             done += 100 if index < 14 else 2000
             curve.add(index * 0.5, done)
-        self.assertIsNone(curve.eta_seconds(10000))
+        eta = curve.eta_seconds(10000)
+        self.assertIsNotNone(eta)
+        self.assertGreater(eta, 0)
+
+    def test_slow_chunks_still_draw_chart(self):
+        job = create_job("copy", [self.fs(os.path.join(self.src, "a.txt"))], self.fs(self.dst))
+        job.phase = "run"
+        job.status = "running"
+        job.total_bytes = 4 * 1024 * 1024
+        job._add_bytes(1024 * 1024, "a.bin")
+        time.sleep(1.2)
+        job._add_bytes(1024 * 1024, "a.bin")
+        snap = job.public(chart=True)
+        self.assertGreater(snap["speed"], 0)
+        self.assertGreater(snap["chart"][-1]["to"], 0)
+
+    def test_chart_keeps_fast_and_slow_segments(self):
+        job = create_job("copy", [self.fs(os.path.join(self.src, "a.txt"))], self.fs(self.dst))
+        job.phase = "run"
+        job.status = "running"
+        job.total_bytes = 200 * 1024 * 1024
+        job._add_bytes(40 * 1024 * 1024, "a.bin")
+        time.sleep(0.3)
+        job._add_bytes(40 * 1024 * 1024, "a.bin")
+        time.sleep(0.4)
+        job._add_bytes(256 * 1024, "a.bin")
+        time.sleep(1.2)
+        job._add_bytes(256 * 1024, "a.bin")
+        chart = job.public(chart=True)["chart"]
+        speeds = [item["speed"] for item in chart]
+        self.assertGreater(len(speeds), 1)
+        self.assertGreater(max(speeds), min(speeds) * 4)
 
     def test_speed_curve_reset_drops_history(self):
         curve = SpeedCurve()
