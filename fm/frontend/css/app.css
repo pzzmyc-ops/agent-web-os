@@ -563,3 +563,24 @@ button,input{font-family:inherit}
 .fop-dialog.brief .fop-chev::before{
   border-width:5px 4px 0 4px;border-color:#555 transparent transparent transparent;transform:translateY(1px);
 }
+.fop-conflict{
+  position:fixed;z-index:42500;width:420px;background:#fff;border:1px solid #9c9c9c;
+  box-shadow:0 8px 28px rgba(0,0,0,.28);color:#1a1a1a;user-select:none;
+}
+.fop-conflict-body{padding:6px 24px 8px}
+.fop-conflict-head{font-size:12px;line-height:1.5}
+.fop-conflict-sub{margin-top:10px;font-size:16px;line-height:1.4}
+.fop-conflict-list{margin:8px 0 4px;padding-left:18px;font-size:12px;color:#555;line-height:1.6;max-height:96px;overflow:auto}
+.fop-choice{
+  display:block;width:100%;text-align:left;margin-top:8px;padding:8px 12px;border:1px solid #d6d6d6;background:#fff;
+  cursor:pointer;color:#1a1a1a;font-family:inherit;
+}
+.fop-choice:hover{border-color:#0067c0;background:#f3f8fd}
+.fop-choice:disabled{opacity:.5;cursor:default}
+.fop-choice b{display:block;font-size:13px;font-weight:600;color:#0067c0}
+.fop-choice span{display:block;margin-top:2px;font-size:12px;color:#555}
+.fop-conflict-foot{display:flex;justify-content:flex-end;padding:8px 24px 12px;border-top:1px solid #e2e2e2;background:#f0f0f0}
+.fop-conflict-cancel{
+  min-width:80px;height:26px;border:1px solid #adadad;background:#e1e1e1;cursor:pointer;font-size:12px;color:#1a1a1a;
+}
+.fop-conflict-cancel:hover{background:#e5f1fb;border-color:#0078d7}

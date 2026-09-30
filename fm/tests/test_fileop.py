@@ -59,11 +59,90 @@ class FileOpTests(unittest.TestCase):
         self.assertEqual(job.total_files, 2)
         self.assertFalse(os.path.exists(self.src))
 
-    def test_existing_target_is_rejected_before_copy(self):
-        os.makedirs(os.path.join(self.dst, "src"))
+    def run_with_policy(self, job, policy):
+        thread = threading.Thread(target=job.run)
+        thread.start()
+        deadline = time.time() + 3
+        while time.time() < deadline and job.status != "waiting":
+            time.sleep(0.02)
+        self.assertEqual(job.status, "waiting")
+        job.request_policy(policy)
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+        return job
+
+    def test_conflicts_copy_others_first_then_wait(self):
+        self.write(os.path.join(self.dst, "src", "a.txt"), "old")
+        job = create_job("copy", [self.fs(self.src)], self.fs(self.dst))
+        thread = threading.Thread(target=job.run)
+        thread.start()
+        deadline = time.time() + 3
+        while time.time() < deadline and job.status != "waiting":
+            time.sleep(0.02)
+        self.assertEqual(job.status, "waiting")
+        self.assertEqual(job.public()["conflictCount"], 1)
+        self.assertTrue(job.public()["needDecision"])
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "sub", "b.txt")), "world")
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "a.txt")), "old")
+        job.request_policy("skip")
+        thread.join(5)
+        self.assertEqual(job.status, "success", job.error)
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "a.txt")), "old")
+        self.assertEqual(job.public()["percent"], 1)
+        self.assertEqual(job.public()["doneFiles"], 2)
+
+    def test_overwrite_replaces_existing_file(self):
+        self.write(os.path.join(self.dst, "src", "a.txt"), "old")
+        job = self.run_with_policy(create_job("copy", [self.fs(self.src)], self.fs(self.dst)), "overwrite")
+        self.assertEqual(job.status, "success", job.error)
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "a.txt")), "hello")
+
+    def test_keep_both_renames_new_file(self):
+        self.write(os.path.join(self.dst, "src", "a.txt"), "old")
+        job = self.run_with_policy(create_job("copy", [self.fs(self.src)], self.fs(self.dst)), "keep")
+        self.assertEqual(job.status, "success", job.error)
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "a.txt")), "old")
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "a (2).txt")), "hello")
+
+    def test_move_skip_leaves_source_and_folder(self):
+        self.write(os.path.join(self.dst, "src", "a.txt"), "old")
+        job = self.run_with_policy(create_job("move", [self.fs(self.src)], self.fs(self.dst)), "skip")
+        self.assertEqual(job.status, "success", job.error)
+        self.assertEqual(self.read(os.path.join(self.src, "a.txt")), "hello")
+        self.assertFalse(os.path.exists(os.path.join(self.src, "sub")))
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "sub", "b.txt")), "world")
+
+    def test_move_overwrite_replaces_and_removes_source(self):
+        self.write(os.path.join(self.dst, "src", "a.txt"), "old")
+        job = self.run_with_policy(create_job("move", [self.fs(self.src)], self.fs(self.dst)), "overwrite")
+        self.assertEqual(job.status, "success", job.error)
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "a.txt")), "hello")
+        self.assertFalse(os.path.exists(self.src))
+
+    def test_copy_into_same_folder_makes_copy_name(self):
+        job = create_job("copy", [self.fs(os.path.join(self.src, "a.txt"))], self.fs(self.src))
+        job.run()
+        self.assertEqual(job.status, "success", job.error)
+        self.assertEqual(self.read(os.path.join(self.src, "a - 副本.txt")), "hello")
+        self.assertEqual(self.read(os.path.join(self.src, "a.txt")), "hello")
+
+    def test_file_versus_folder_conflict_is_rejected(self):
+        self.write(os.path.join(self.dst, "src"), "x")
         with self.assertRaises(FileExistsError):
             create_job("copy", [self.fs(self.src)], self.fs(self.dst))
-        self.assertFalse(os.path.exists(os.path.join(self.dst, "src", "a.txt")))
+
+    def test_cancel_while_waiting_for_decision(self):
+        self.write(os.path.join(self.dst, "src", "a.txt"), "old")
+        job = create_job("copy", [self.fs(self.src)], self.fs(self.dst))
+        thread = threading.Thread(target=job.run)
+        thread.start()
+        deadline = time.time() + 3
+        while time.time() < deadline and job.status != "waiting":
+            time.sleep(0.02)
+        job.request_cancel()
+        thread.join(5)
+        self.assertEqual(job.status, "cancelled")
+        self.assertEqual(self.read(os.path.join(self.dst, "src", "a.txt")), "old")
 
     def test_cannot_move_folder_into_itself(self):
         with self.assertRaises(ValueError):

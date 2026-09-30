@@ -175,6 +175,62 @@ const FileOp = {
     const briefBtn = root.querySelector('[data-act="brief"]');
     const briefText = root.querySelector("[data-brief]");
     let brief = false;
+    let conflictEl = null;
+
+    function closeConflict() {
+      if (!conflictEl) return;
+      conflictEl.remove();
+      conflictEl = null;
+    }
+
+    function showConflict(next) {
+      if (conflictEl) return;
+      const verb = next.op === "move" ? "移动" : "复制";
+      const names = (next.conflictNames || []).map((name) => "<li>" + escapeFileOp(name) + "</li>").join("");
+      const more = next.conflictCount > (next.conflictNames || []).length
+        ? "<li>还有 " + formatCount(next.conflictCount - next.conflictNames.length) + " 个</li>"
+        : "";
+      conflictEl = document.createElement("div");
+      conflictEl.className = "fop-conflict";
+      conflictEl.innerHTML = [
+        '<div class="fop-caption"><span class="fop-caption-text">替换或跳过文件</span></div>',
+        '<div class="fop-conflict-body">',
+        '<div class="fop-conflict-head">正在将 ' + formatCount(next.totalFiles) + " 个项目从 <span class=\"fop-place\">"
+          + escapeFileOp(next.srcLabel) + "</span> " + verb + "到 <span class=\"fop-place\">" + escapeFileOp(next.destLabel) + "</span></div>",
+        '<div class="fop-conflict-sub">目标已包含 ' + formatCount(next.conflictCount) + " 个同名文件，其余文件正在" + verb + "。</div>",
+        '<ul class="fop-conflict-list">' + names + more + "</ul>",
+        '<button type="button" class="fop-choice" data-policy="overwrite"><b>替换目标中的文件</b><span>用正在' + verb + "的文件覆盖同名文件</span></button>",
+        '<button type="button" class="fop-choice" data-policy="skip"><b>跳过这些文件</b><span>保留目标中已有的文件</span></button>',
+        '<button type="button" class="fop-choice" data-policy="keep"><b>保留两者</b><span>新文件改名为“名称 (2)”</span></button>',
+        "</div>",
+        '<div class="fop-conflict-foot"><button type="button" class="fop-conflict-cancel">取消</button></div>',
+      ].join("");
+      document.body.appendChild(conflictEl);
+      const rect = root.getBoundingClientRect();
+      conflictEl.style.left = Math.max(8, Math.min(window.innerWidth - conflictEl.offsetWidth - 8, rect.left + 24)) + "px";
+      conflictEl.style.top = Math.max(8, Math.min(window.innerHeight - conflictEl.offsetHeight - 8, rect.top + 40)) + "px";
+      bindFileOpDrag(conflictEl, conflictEl.querySelector(".fop-caption"));
+      conflictEl.querySelectorAll("[data-policy]").forEach((btn) => {
+        btn.onclick = () => {
+          conflictEl.querySelectorAll("button").forEach((item) => {
+            item.disabled = true;
+          });
+          API.post("/api/fileop/resolve", { id: current.id, policy: btn.dataset.policy }).then((res) => {
+            closeConflict();
+            paint(res.data);
+          }).catch((err) => {
+            conflictEl.querySelectorAll("button").forEach((item) => {
+              item.disabled = false;
+            });
+            toast(err.message || String(err));
+          });
+        };
+      });
+      conflictEl.querySelector(".fop-conflict-cancel").onclick = () => {
+        closeConflict();
+        API.post("/api/fileop/cancel", { id: current.id }).catch((err) => toast(err.message || String(err)));
+      };
+    }
     (task.chart || []).forEach((sample) => samples.push(sample));
     if (samples.length) lastFrac = samples[samples.length - 1].to;
     if (task.axisMax) {
@@ -294,6 +350,7 @@ const FileOp = {
       closed = true;
       if (pollTimer) clearTimeout(pollTimer);
       if (closeTimer) clearTimeout(closeTimer);
+      closeConflict();
       root.remove();
       layoutFileOps();
     }
@@ -304,7 +361,12 @@ const FileOp = {
       root.classList.toggle("is-error", next.status === "error");
       const pausedNow = next.status === "paused";
       const pct = Math.max(0, Math.min(100, Math.floor((next.percent || 0) * 100)));
-      const pctText = pausedNow ? "已暂停 - 已完成 " + pct + "%" : (next.phase === "scan" ? "正在计算" : "已完成 " + pct + "%");
+      let pctText = next.phase === "scan" ? "正在计算" : "已完成 " + pct + "%";
+      if (pausedNow) pctText = "已暂停 - 已完成 " + pct + "%";
+      else if (next.status === "waiting") pctText = "等待选择 - 已完成 " + pct + "%";
+      const alive = next.status === "scanning" || next.status === "running" || next.status === "waiting" || pausedNow;
+      if (next.needDecision && alive) showConflict(next);
+      else closeConflict();
       captionEl.textContent = next.phase === "scan" ? "正在计算" : pctText;
       percentEl.textContent = next.phase === "scan" ? "正在计算" : pctText;
       titleEl.innerHTML = fileOpTitle(next);
@@ -328,7 +390,6 @@ const FileOp = {
           leftEl.textContent = formatCount(leftFiles) + " (" + formatSize(leftBytes) + ")";
         }
       }
-      const alive = next.status === "scanning" || next.status === "running" || pausedNow;
       pauseBtn.hidden = !alive;
       pauseBtn.classList.toggle("resume", pausedNow);
       pauseBtn.title = pausedNow ? "继续" : "暂停";

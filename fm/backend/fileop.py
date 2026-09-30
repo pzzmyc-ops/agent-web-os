@@ -143,6 +143,33 @@ def _remove_dir(path: str) -> None:
     os.rmdir(path)
 
 
+def _split_name(name: str):
+    if name.startswith("."):
+        return name, ""
+    stem, ext = os.path.splitext(name)
+    return stem, ext
+
+
+def unique_name(folder: str, name: str, suffix: str = "") -> str:
+    stem, ext = _split_name(name)
+    if suffix:
+        candidate = f"{stem} - {suffix}{ext}"
+        if not os.path.lexists(os.path.join(folder, candidate)):
+            return candidate
+        index = 2
+        while True:
+            candidate = f"{stem} - {suffix} ({index}){ext}"
+            if not os.path.lexists(os.path.join(folder, candidate)):
+                return candidate
+            index += 1
+    index = 2
+    while True:
+        candidate = f"{stem} ({index}){ext}"
+        if not os.path.lexists(os.path.join(folder, candidate)):
+            return candidate
+        index += 1
+
+
 class SpeedCurve:
     def __init__(self):
         self.points = []
@@ -270,6 +297,12 @@ class Job:
         self.peak = 0.0
         self.run_mark = 0.0
         self.last_eta = None
+        self.policy = ""
+        self.conflicts = []
+        self.conflict_names = []
+        self.skipped_files = 0
+        self.skipped_bytes = 0
+        self.decision_event = threading.Event()
         self.thread = threading.Thread(target=self.run, name="fm-fileop-" + self.id[:8], daemon=True)
 
     def start(self) -> None:
@@ -280,9 +313,9 @@ class Job:
             status = self.status
             phase = self.phase
             total_bytes = self.total_bytes
-            done_bytes = self.done_bytes
+            done_bytes = self.done_bytes + self.skipped_bytes
             total_files = self.total_files
-            done_files = self.done_files
+            done_files = self.done_files + self.skipped_files
             speed = 0.0
             eta = None
             if status == "running" and phase != "scan":
@@ -321,6 +354,10 @@ class Job:
                 "axisMax": self.axis_max,
                 "axisStep": self.axis_step,
                 "refreshPaths": list(self.changed),
+                "conflictCount": len(self.conflicts),
+                "conflictNames": list(self.conflict_names),
+                "needDecision": bool(self.conflicts) and not self.policy and status not in _TERMINAL,
+                "policy": self.policy,
             }
             if chart:
                 data["chart"] = [dict(item) for item in self.chart]
@@ -355,6 +392,40 @@ class Job:
                 raise ValueError("任务已结束")
             self.cancel = True
         self.pause_event.set()
+        self.decision_event.set()
+
+    def request_policy(self, policy: str) -> None:
+        if policy not in ("overwrite", "skip", "keep"):
+            raise ValueError("invalid policy")
+        with self.lock:
+            if self.status in _TERMINAL:
+                raise ValueError("任务已结束")
+            if self.policy:
+                raise ValueError("已经选择过处理方式")
+            self.policy = policy
+            if self.status == "waiting":
+                self.status = "running"
+        self.decision_event.set()
+
+    def _wait_decision(self) -> None:
+        with self.lock:
+            if self.policy or self.cancel:
+                return
+            self.status = "waiting"
+            self.speed = 0.0
+            self.current_name = ""
+        while True:
+            if self._cancelled():
+                raise FileOpCancelled()
+            with self.lock:
+                if self.policy:
+                    break
+            self.decision_event.wait(0.05)
+        with self.lock:
+            if self.status == "waiting":
+                self.status = "running"
+            self.curve.reset()
+        self.checkpoint()
 
     def _cancelled(self) -> bool:
         with self.lock:
@@ -434,14 +505,20 @@ class Job:
         with self.lock:
             self.done_files += 1
 
+    def _skip_file(self, size: int, name: str) -> None:
+        with self.lock:
+            self.skipped_files += 1
+            self.skipped_bytes += size
+            self.current_name = name
+
     def _mark(self, status: str, error: str = "") -> None:
         with self.lock:
             self.status = status
             self.error = error
             self.speed = 0.0
             if status == "success":
-                self.done_files = self.total_files
-                self.done_bytes = self.total_bytes
+                self.done_files = self.total_files - self.skipped_files
+                self.done_bytes = self.total_bytes - self.skipped_bytes
                 self.current_name = ""
                 self.phase = "run"
 
@@ -453,23 +530,21 @@ class Job:
         if self.op != "delete":
             self.dest_rels.append(rel)
 
-    def _scan_one(self, src: str) -> None:
+    def _scan_one(self, src: str, top: str) -> None:
         self.checkpoint()
         if os.path.isfile(src) and not os.path.isdir(src):
             size = os.path.getsize(src)
-            rel = os.path.basename(src)
-            _check_rel(rel)
-            self.files.append((src, rel, size))
-            self._scan_tick(rel, size)
+            _check_rel(top)
+            self.files.append((src, top, size))
+            self._scan_tick(top, size)
             return
         if not os.path.isdir(src):
             raise FileNotFoundError(src)
-        parent = os.path.dirname(src.rstrip("\\/"))
-        top = os.path.basename(src.rstrip("\\/"))
         self._add_dir(src, top)
         for root, dirnames, filenames in os.walk(src):
             self.checkpoint()
-            rel_root = os.path.relpath(root, parent)
+            inner = os.path.relpath(root, src)
+            rel_root = top if inner == "." else os.path.join(top, inner)
             for dirname in dirnames:
                 abs_dir = os.path.join(root, dirname)
                 rel_dir = os.path.join(rel_root, dirname)
@@ -485,11 +560,15 @@ class Job:
                 self.files.append((abs_file, rel_file, size))
                 self._scan_tick(filename, size)
 
-    def _copy_bytes(self, src: str, target: str, size: int) -> None:
+    def _copy_bytes(self, src: str, target: str, size: int, overwrite: bool = False) -> None:
         name = os.path.basename(src)
         self._set_name(name)
         if os.path.lexists(target):
-            raise FileExistsError(name)
+            if not overwrite:
+                raise FileExistsError(name)
+            if os.path.isdir(target) and not os.path.islink(target):
+                raise IsADirectoryError(name)
+            _remove_file(target)
         parent = os.path.dirname(target)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -519,28 +598,67 @@ class Job:
                 raise FileExistsError(os.path.basename(rel))
             os.makedirs(target, exist_ok=True)
 
+    def _detect_conflicts(self) -> None:
+        plain = []
+        clashing = []
+        for entry in self.files:
+            target = _join_target(self.dest_full, entry[1])
+            if os.path.lexists(target):
+                clashing.append(entry)
+            else:
+                plain.append(entry)
+        with self.lock:
+            self.files = plain + clashing
+            self.conflicts = clashing
+            self.conflict_names = [os.path.basename(entry[0]) for entry in clashing[:5]]
+
+    def _resolve_target(self, src: str, rel: str, size: int):
+        target = _join_target(self.dest_full, rel)
+        if not os.path.lexists(target):
+            return target
+        with self.lock:
+            policy = self.policy
+        if not policy:
+            self._wait_decision()
+            with self.lock:
+                policy = self.policy
+        name = os.path.basename(src)
+        if policy == "skip":
+            self._skip_file(size, name)
+            return None
+        if policy == "keep":
+            folder = os.path.dirname(target)
+            return os.path.join(folder, unique_name(folder, os.path.basename(target)))
+        if os.path.isdir(target) and not os.path.islink(target):
+            raise IsADirectoryError(name)
+        return target
+
     def _copy_all(self) -> None:
         self._ensure_dirs()
         for src, rel, size in self.files:
             self.checkpoint()
-            target = _join_target(self.dest_full, rel)
-            self._copy_bytes(src, target, size)
+            target = self._resolve_target(src, rel, size)
+            if target is None:
+                continue
+            self._copy_bytes(src, target, size, overwrite=True)
             self._finish_file()
 
     def _move_all(self) -> None:
         self._ensure_dirs()
         for src, rel, size in self.files:
             self.checkpoint()
-            target = _join_target(self.dest_full, rel)
+            target = self._resolve_target(src, rel, size)
+            if target is None:
+                continue
             name = os.path.basename(src)
-            if os.path.lexists(target):
-                raise FileExistsError(name)
             if same_volume(src, self.dest_full):
                 self._set_name(name)
+                if os.path.lexists(target):
+                    _remove_file(target)
                 os.rename(src, target)
                 self._add_bytes(size, name)
             else:
-                self._copy_bytes(src, target, size)
+                self._copy_bytes(src, target, size, overwrite=True)
                 _remove_file(src)
             self._finish_file()
         self._remove_source_dirs()
@@ -560,8 +678,11 @@ class Job:
         for path in dirs:
             self.checkpoint()
             self._set_name(os.path.basename(path.rstrip("\\/")))
-            if os.path.lexists(path):
-                _remove_dir(path)
+            if not os.path.lexists(path):
+                continue
+            if self.op == "move" and not os.path.islink(path) and os.listdir(path):
+                continue
+            _remove_dir(path)
 
     def _execute(self) -> None:
         with self.lock:
@@ -569,9 +690,11 @@ class Job:
             if self.pause_event.is_set():
                 self.status = "scanning"
         self.checkpoint()
-        for src in self.sources:
-            self._scan_one(src)
+        for src, top in self.sources:
+            self._scan_one(src, top)
         self.checkpoint()
+        if self.op != "delete":
+            self._detect_conflicts()
         with self.lock:
             self.phase = "run"
             self._speed_mark = 0.0
@@ -664,23 +787,31 @@ def create_job(op: str, paths: List[str], dest: str = "") -> Job:
             raise FileNotFoundError(path)
         sources.append(src)
     _reject_overlap(sources)
-    if op in ("copy", "move"):
-        kept = []
-        names = []
-        for src in sources:
-            if os.path.isdir(src):
-                _reject_into_self(src, dest_full)
-            name = os.path.basename(src.rstrip("\\/"))
-            if name in names:
+    entries = []
+    names = []
+    for src in sources:
+        name = os.path.basename(src.rstrip("\\/"))
+        if op == "delete":
+            entries.append((src, name))
+            continue
+        if os.path.isdir(src):
+            _reject_into_self(src, dest_full)
+        if name in names:
+            raise FileExistsError(name)
+        names.append(name)
+        target = os.path.join(dest_full, name)
+        same_place = os.path.lexists(target) and os.path.realpath(src) == os.path.realpath(target)
+        if same_place:
+            if op == "move":
+                continue
+            name = unique_name(dest_full, name, "副本")
+        elif os.path.lexists(target):
+            src_is_dir = os.path.isdir(src) and not os.path.islink(src)
+            dst_is_dir = os.path.isdir(target) and not os.path.islink(target)
+            if src_is_dir != dst_is_dir:
                 raise FileExistsError(name)
-            names.append(name)
-            target = os.path.join(dest_full, name)
-            if os.path.lexists(target):
-                if op == "move" and os.path.realpath(src) == os.path.realpath(target):
-                    continue
-                raise FileExistsError(name)
-            kept.append(src)
-        sources = kept
+        entries.append((src, name))
+    sources = entries
     parents = []
     changed = []
     for path in paths:
@@ -716,6 +847,11 @@ class IdBody(BaseModel):
     id: str
 
 
+class PolicyBody(BaseModel):
+    id: str
+    policy: str
+
+
 @router.post("/start")
 def start_op(body: StartBody):
     return ok(start_job(body.op, body.paths, body.dest))
@@ -749,4 +885,11 @@ def resume_op(body: IdBody):
 def cancel_op(body: IdBody):
     job = STORE.get(body.id)
     job.request_cancel()
+    return ok(job.public())
+
+
+@router.post("/resolve")
+def resolve_op(body: PolicyBody):
+    job = STORE.get(body.id)
+    job.request_policy(body.policy)
     return ok(job.public())
