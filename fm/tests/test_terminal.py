@@ -4,8 +4,6 @@ import threading
 import time
 import unittest
 import uuid
-from urllib.parse import quote
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -158,9 +156,12 @@ class TerminalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             open_shell("   ")
 
-    def test_websocket_runs_the_shell_and_close_stops_it(self):
+    def test_refresh_keeps_the_shell_and_replays_output(self):
         with TestClient(terminal_app()) as client:
-            with client.websocket_connect("/api/terminal/ws?path=" + quote(self.folder)) as ws:
+            started = client.post("/api/terminal/start", params={"path": self.folder})
+            self.assertEqual(started.status_code, 200)
+            session_id = started.json()["id"]
+            with client.websocket_connect("/api/terminal/ws?id=" + session_id) as ws:
                 output = Output(ws.receive_text)
                 token = uuid.uuid4().hex
                 expr = "$PID" if IS_WINDOWS else "echo $$"
@@ -171,7 +172,18 @@ class TerminalTests(unittest.TestCase):
                 ws.send_text(json.dumps({"type": "resize", "cols": 110, "rows": 30}))
                 width = "$host.UI.RawUI.WindowSize.Width" if IS_WINDOWS else "tput cols"
                 self.assertEqual(self.ask_ws(output, ws, width), "110")
+            self.assertTrue(process_alive(pid))
+            listed = client.get("/api/terminal/active")
+            self.assertEqual(listed.status_code, 200)
+            self.assertIn(session_id, [item["id"] for item in listed.json()["sessions"]])
+            with client.websocket_connect("/api/terminal/ws?id=" + session_id) as again:
+                replay = Output(again.receive_text)
+                text = replay.wait_for(token, 20)
+                self.assertTrue(text.startswith("\x00"))
+                again.send_text(json.dumps({"type": "close"}))
             wait_dead(pid)
+            left = client.get("/api/terminal/active")
+            self.assertNotIn(session_id, [item["id"] for item in left.json()["sessions"]])
 
     def ask_ws(self, output: Output, ws, expression: str) -> str:
         token = uuid.uuid4().hex
@@ -180,9 +192,11 @@ class TerminalTests(unittest.TestCase):
         line = text[text.rfind(token):].splitlines()[0]
         return line[len(token):].strip()
 
-    def test_websocket_rejects_a_file_path(self):
+    def test_start_rejects_a_file_path(self):
         with TestClient(terminal_app()) as client:
-            with client.websocket_connect("/api/terminal/ws?path=" + quote(self.file)) as ws:
+            resp = client.post("/api/terminal/start", params={"path": self.file})
+            self.assertEqual(resp.status_code, 400)
+            with client.websocket_connect("/api/terminal/ws?id=missing") as ws:
                 with self.assertRaises(WebSocketDisconnect) as caught:
                     ws.receive_text()
             self.assertEqual(caught.exception.code, 1008)

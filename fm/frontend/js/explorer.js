@@ -554,17 +554,26 @@ function openExplorer(startPath = "/") {
       paintSortHeader(table);
       paintListWindow(table);
     }
-    stLeft.textContent = (state.searching ? `搜索到 ${state.items.length} 项` : `${state.items.length} 个项目`)
-      + (state.selected.size ? `，已选 ${state.selected.size}` : "");
+    stLeft.textContent = selectionStatus();
     updateNavButtons();
+  }
+
+  function selectionStatus() {
+    const base = state.searching ? `搜索到 ${state.items.length} 项` : `${state.items.length} 个项目`;
+    if (!state.selected.size) return base;
+    let text = `${base}，已选 ${state.selected.size}`;
+    if (state.selected.size === 1) {
+      const item = state.items.find((it) => state.selected.has(it.path));
+      if (item && item.type === "file") text += `，${formatSize(item.size)}`;
+    }
+    return text;
   }
 
   function updateSelectionUI() {
     content.querySelectorAll(".file-item, tr[data-path]").forEach((el) => {
       el.classList.toggle("selected", state.selected.has(el.dataset.path));
     });
-    stLeft.textContent = (state.searching ? `搜索到 ${state.items.length} 项` : `${state.items.length} 个项目`)
-      + (state.selected.size ? `，已选 ${state.selected.size}` : "");
+    stLeft.textContent = selectionStatus();
   }
 
   function clearDropTargets() {

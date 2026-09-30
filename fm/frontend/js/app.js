@@ -93,6 +93,12 @@ const Session = {
       entry.activePath = info.state.activePath || "";
       return entry;
     }
+    if (info.app === "terminal") {
+      if (!info.state || !info.state.sessionId) return null;
+      entry.paths = [info.state.path];
+      entry.session = info.state.sessionId;
+      return entry;
+    }
     const path = this.paths.get(info.winId);
     if (path) entry.paths = [path];
     return entry;
@@ -109,6 +115,10 @@ const Session = {
   },
 
   async reopen(entry) {
+    if (entry.app === "terminal") {
+      const win = await FMTerminal.reattach(entry.session, entry.paths[0]);
+      return win.id;
+    }
     if (entry.app === "explorer") {
       const res = await DesktopOS.exec({ op: "explorer.open", params: { path: entry.paths[0] || "/" } });
       return res.winId;

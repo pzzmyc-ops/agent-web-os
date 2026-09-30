@@ -13,14 +13,43 @@ const FMTerminal = {
 
   async open(folder, winId) {
     if (!folder || folder === "/") throw new Error("这里不是可以打开终端的目录");
+    const resp = await fetch("/api/terminal/start?path=" + encodeURIComponent(folder), { method: "POST" });
+    const body = await resp.text();
+    if (!resp.ok) throw new Error(body);
+    const data = JSON.parse(body);
+    if (!data.id) throw new Error("终端没有会话号");
+    return this.attach(data.id, data.path, winId);
+  },
+
+  async reattach(sessionId, folder) {
+    const resp = await fetch("/api/terminal/active");
+    const body = await resp.text();
+    if (!resp.ok) throw new Error(body);
+    const data = JSON.parse(body);
+    const alive = data.sessions.some((session) => session.id === sessionId);
+    if (!alive) throw new Error("终端进程已经不在了");
+    return this.attach(sessionId, folder, "terminal:" + sessionId, true);
+  },
+
+  async attach(sessionId, folder, winId, replay) {
     await Loader.loadCss("/vendor/xterm/xterm.min.css");
     await Loader.loadJs("/vendor/xterm/xterm.min.js");
     await Loader.loadJs("/vendor/xterm/xterm-addon-fit.min.js");
     if (!window.Terminal || !window.FitAddon) throw new Error("终端组件加载失败");
+    const id = winId || ("terminal:" + sessionId);
+    const exist = WM.windows.get(id);
+    if (exist) {
+      WM.focus(id);
+      if (exist.minimized) WM.restore(id);
+      return exist;
+    }
     const name = String(folder).split(/[\\/]/).filter(Boolean).pop() || folder;
     const host = document.createElement("div");
     host.className = "term-host";
-    const id = winId || ("terminal:" + (++this.seq));
+    DesktopOS.registerInstance(id, {
+      app: "terminal",
+      describe: () => ({ sessionId, path: folder }),
+    });
     const win = WM.create({
       id,
       title: "终端 - " + name,
@@ -50,11 +79,27 @@ const FMTerminal = {
       navigator.clipboard.writeText(text).catch((err) => { throw err; });
       return false;
     });
-    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/terminal/ws?path=" + encodeURIComponent(folder));
+    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/terminal/ws?id=" + encodeURIComponent(sessionId));
+    let suppressInput = false;
+    let first = true;
     term.onData((data) => {
+      if (suppressInput) return;
       if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(data));
     });
-    ws.onmessage = (ev) => term.write(ev.data);
+    ws.onmessage = (ev) => {
+      let data = ev.data;
+      if (first) {
+        first = false;
+        if (data.charAt(0) === "\0") data = data.slice(1);
+        if (replay) {
+          suppressInput = true;
+          term.write(data);
+          suppressInput = false;
+          return;
+        }
+      }
+      term.write(data);
+    };
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     };
@@ -69,7 +114,9 @@ const FMTerminal = {
     });
     observer.observe(host);
     win.onClose = () => {
+      DesktopOS.unregisterInstance(win.id);
       observer.disconnect();
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "close" }));
       ws.close();
       term.dispose();
       return true;

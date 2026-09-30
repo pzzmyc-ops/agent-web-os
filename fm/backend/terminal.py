@@ -1,10 +1,12 @@
 import asyncio
 import json
 import os
+import queue
 import threading
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, HTTPException, Query, WebSocket
 
 from .pathutil import IS_WINDOWS, to_fs
 
@@ -136,48 +138,156 @@ def open_shell(path: str, rows: int = 24, cols: int = 80) -> ShellSession:
     return ShellSession(backend)
 
 
-def _put(loop, queue, item) -> None:
-    loop.call_soon_threadsafe(queue.put_nowait, item)
+class HostedSession:
+    def __init__(self, folder: str):
+        self.id = uuid.uuid4().hex
+        self.path = to_fs(os.path.abspath(folder))
+        self.shell = open_shell(folder)
+        self.chunks = []
+        self.subscribers = []
+        self.ended = None
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._read, name="term-" + self.id[:8], daemon=True)
+        self.thread.start()
+
+    def _read(self) -> None:
+        try:
+            while True:
+                chunk = self.shell.read()
+                if chunk == "":
+                    continue
+                with self.lock:
+                    self.chunks.append(chunk)
+                    for subscriber in self.subscribers:
+                        subscriber.put(chunk)
+        except Exception as exc:
+            with self.lock:
+                self.ended = exc
+                for subscriber in self.subscribers:
+                    subscriber.put(exc)
+
+    def subscribe(self):
+        subscriber = queue.Queue()
+        with self.lock:
+            history = "".join(self.chunks)
+            ended = self.ended
+            if ended is None:
+                self.subscribers.append(subscriber)
+        return subscriber, history, ended
+
+    def unsubscribe(self, subscriber) -> None:
+        with self.lock:
+            if subscriber in self.subscribers:
+                self.subscribers.remove(subscriber)
+            subscriber.put(None)
+
+    def write(self, text: str) -> None:
+        self.shell.write(text)
+
+    def resize(self, rows: int, cols: int) -> None:
+        self.shell.resize(rows, cols)
+
+    def close(self) -> None:
+        self.shell.close()
+
+    @property
+    def pid(self) -> int:
+        return self.shell.pid
 
 
-def _apply_control(session: ShellSession, text: str) -> None:
-    payload = json.loads(text)
-    if payload.get("type") != "resize":
-        raise ValueError(f"unknown message: {text}")
-    session.resize(payload["rows"], payload["cols"])
+class SessionRegistry:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.sessions = {}
+
+    def create(self, path: str) -> HostedSession:
+        session = HostedSession(path)
+        with self.lock:
+            self.sessions[session.id] = session
+        return session
+
+    def get(self, session_id: str) -> HostedSession:
+        with self.lock:
+            session = self.sessions.get(session_id)
+        if session is None:
+            raise KeyError(session_id)
+        return session
+
+    def close(self, session_id: str) -> None:
+        with self.lock:
+            session = self.sessions.pop(session_id, None)
+        if session is None:
+            raise KeyError(session_id)
+        session.close()
+
+    def list(self) -> list:
+        with self.lock:
+            sessions = list(self.sessions.values())
+        return [{"id": session.id, "path": session.path} for session in sessions]
+
+
+REGISTRY = SessionRegistry()
+
+
+def _enqueue(loop, target, item) -> None:
+    loop.call_soon_threadsafe(target.put_nowait, item)
+
+
+@router.post("/start")
+def terminal_start(path: str = Query()):
+    try:
+        session = REGISTRY.create(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": session.id, "path": session.path}
+
+
+@router.get("/active")
+def terminal_active():
+    return {"sessions": REGISTRY.list()}
+
+
+@router.post("/close")
+def terminal_close(id: str = Query()):
+    try:
+        REGISTRY.close(id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no session: {id}")
+    return {"id": id}
 
 
 @router.websocket("/ws")
 async def terminal_ws(websocket: WebSocket):
-    folder = websocket.query_params.get("path", "")
-    await websocket.accept()
+    session_id = websocket.query_params.get("id", "")
     try:
-        session = open_shell(folder)
-    except ValueError as exc:
+        session = REGISTRY.get(session_id)
+    except KeyError as exc:
+        await websocket.accept()
         await websocket.close(code=1008, reason=str(exc)[:120])
         return
+    await websocket.accept()
+    subscriber, history, ended = session.subscribe()
+    await websocket.send_text("\x00" + history)
+    if ended is not None:
+        await websocket.close()
+        return
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
+    incoming = asyncio.Queue()
 
-    def reader():
-        try:
-            while True:
-                chunk = session.read()
-                if chunk == "":
-                    continue
-                _put(loop, queue, chunk)
-        except Exception as exc:
-            _put(loop, queue, exc)
+    def pump():
+        while True:
+            item = subscriber.get()
+            _enqueue(loop, incoming, item)
+            if item is None or isinstance(item, Exception):
+                return
 
-    threading.Thread(target=reader, name="term-read", daemon=True).start()
+    threading.Thread(target=pump, name="term-ws-" + session.id[:8], daemon=True).start()
 
     async def send_output():
         while True:
-            item = await queue.get()
-            if isinstance(item, Exception):
-                if isinstance(item, EOFError):
-                    return
-                raise item
+            item = await incoming.get()
+            if item is None or isinstance(item, Exception):
+                return
             await websocket.send_text(item)
 
     async def take_input():
@@ -191,7 +301,13 @@ async def terminal_ws(websocket: WebSocket):
             text = message.get("text")
             if text is None:
                 raise ValueError("empty websocket message")
-            _apply_control(session, text)
+            payload = json.loads(text)
+            if payload.get("type") == "close":
+                REGISTRY.close(session.id)
+                return
+            if payload.get("type") != "resize":
+                raise ValueError(f"unknown message: {text}")
+            session.resize(payload["rows"], payload["cols"])
 
     send_task = asyncio.create_task(send_output())
     take_task = asyncio.create_task(take_input())
@@ -205,4 +321,4 @@ async def terminal_ws(websocket: WebSocket):
         for task in done:
             task.result()
     finally:
-        session.close()
+        session.unsubscribe(subscriber)
