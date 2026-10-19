@@ -677,3 +677,45 @@
 
 
 .plan-board-footer[hidden]{display:none}
+
+
+/* 破坏性动作的主按钮:和 primary 同一个位置(右侧最后一个),只是换成实心红。
+   danger 那个 margin-right:auto 会把按钮推到最左边,对话框里不合适。 */
+.wm-footer-danger-solid {
+  border-color: transparent;
+  background: #b42318;
+  color: #fff;
+}
+
+
+.wm-footer-danger-solid:hover:not(:disabled) {
+  background: #99190f;
+}
+
+
+.wm-footer-danger-solid:focus-visible {
+  outline: 2px solid color-mix(in srgb, #b42318 45%, transparent);
+  outline-offset: 2px;
+}
+
+
+/* 会话确认框(删除对话 / 删除文件夹):一句正文 + 一行灰字补充,按钮走 wm-footer 标准条 */
+#wm-conversation-confirm .wm-body {
+  padding: 16px;
+}
+
+
+#wm-conversation-confirm .confirm-msg {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text, #1d1d1f);
+}
+
+
+#wm-conversation-confirm .confirm-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted, #86868b);
+}

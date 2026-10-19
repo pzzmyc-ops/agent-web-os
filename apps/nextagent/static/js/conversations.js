@@ -15,7 +15,7 @@ import { findChatInflightTask } from "./composer.js";
 import { stashPlanBoard, applyPlanDoc, setPlanMode } from "./plan-review.js";
 import { persistSessionUiNow, applySessionUi } from "./session-ui.js";
 import { removeTurnWaiting } from "./blocks-renderer.js";
-import { openWindow, closeWindow, getWindow } from "./modules/window-manager/index.js";
+import { openWindow, closeWindow, getWindow, getWindowAction } from "./modules/window-manager/index.js";
 import { currentApp, filterAppConversations, filterAppFolders, isFeishuWebhookApp, syncFeishuWebhookChrome } from "./feishu-webhook-app.js";
 
 var PENCIL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
@@ -369,9 +369,14 @@ function makeConvRow(c) {
   delBtn.title = "删除对话";
   delBtn.onclick = function (e) {
     e.stopPropagation();
-    askConfirm("删除对话", "确定要删除这个对话吗？", "删除", function () {
-      deleteConversationRow(c);
-    });
+    var name = String(c.title || "").trim();
+    askConfirm(
+      "删除对话",
+      name ? "确定要删除「" + name + "」吗？" : "确定要删除这个对话吗？",
+      "删除",
+      function () { deleteConversationRow(c); },
+      "删除后这个对话的消息记录无法恢复；项目文件夹里的文件和产物不会被删除。"
+    );
   };
 
   wrap.appendChild(btn);
@@ -407,41 +412,58 @@ function makeConvRow(c) {
   return wrap;
 }
 
-function askConfirm(title, message, okLabel, onOk) {
+// 对话/文件夹的确认框。按钮走 wm-footer 标准条（和「上下文」窗口同一个排版）:
+// 右边两个按钮,左「取消」右「你确认的那个动作」,破坏性动作是实心红。
+function askConfirm(title, message, okLabel, onOk, hint) {
   var dlgId = "conversation-confirm";
   if (getWindow(dlgId)) closeWindow(dlgId);
+  function onKey(e) {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    closeWindow(dlgId);
+  }
   openWindow(dlgId, {
     type: "dialog",
     title: title,
-    width: 360,
-    height: 150,
-    minWidth: 280,
-    minHeight: 130,
+    width: 380,
+    height: 216,
+    minWidth: 300,
+    minHeight: 168,
+    footerActions: [
+      {
+        id: "cancel",
+        label: "取消",
+        onClick: function () { closeWindow(dlgId); },
+      },
+      {
+        id: "ok",
+        label: okLabel,
+        variant: "danger-solid",
+        onClick: function () {
+          closeWindow(dlgId);
+          onOk();
+        },
+      },
+    ],
     onMount: function (body) {
-      body.style.cssText = "display:flex;flex-direction:column;gap:12px;padding:16px;";
-      var label = document.createElement("div");
-      label.style.cssText = "font-size:14px;color:var(--text,#333);";
-      label.textContent = message;
-      body.appendChild(label);
-      var btns = document.createElement("div");
-      btns.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
-      var cancelBtn = document.createElement("button");
-      cancelBtn.className = "ae-dialog-btn";
-      cancelBtn.textContent = "取消";
-      cancelBtn.onclick = function () { closeWindow(dlgId); };
-      var okBtn = document.createElement("button");
-      okBtn.className = "ae-dialog-btn ae-dialog-btn-danger";
-      okBtn.textContent = okLabel;
-      okBtn.onclick = function () {
-        closeWindow(dlgId);
-        onOk();
-      };
-      btns.appendChild(cancelBtn);
-      btns.appendChild(okBtn);
-      body.appendChild(btns);
-      setTimeout(function () { okBtn.focus(); }, 50);
+      var msg = document.createElement("p");
+      msg.className = "confirm-msg";
+      msg.textContent = message;
+      body.appendChild(msg);
+      if (hint) {
+        var note = document.createElement("p");
+        note.className = "confirm-hint";
+        note.textContent = hint;
+        body.appendChild(note);
+      }
+    },
+    onClose: function () {
+      document.removeEventListener("keydown", onKey, true);
     },
   });
+  document.addEventListener("keydown", onKey, true);
+  var okBtn = getWindowAction(dlgId, "ok");
+  if (okBtn) setTimeout(function () { okBtn.focus(); }, 50);
 }
 
 function askFolderName(title, initial, okLabel, onOk, placeholder) {
@@ -504,7 +526,17 @@ function renameFolderRow(f) {
 }
 
 function deleteFolderRow(f) {
-  if (!confirm("删除文件夹后，里面的对话会回到未分组。确定删除？")) return;
+  var fname = String((f && f.name) || "").trim();
+  askConfirm(
+    "删除文件夹",
+    fname ? "确定要删除文件夹「" + fname + "」吗？" : "确定要删除这个文件夹吗？",
+    "删除",
+    function () { removeFolderRow(f); },
+    "文件夹里的对话不会被删除，会回到未分组。"
+  );
+}
+
+function removeFolderRow(f) {
   naFetch(API_BASE + "/api/v1/conversation-folders/" + encodeURIComponent(f.id), { method: "DELETE" })
     .then(function (r) { return r.json(); })
     .then(function (res) {
@@ -742,7 +774,7 @@ function deleteSelectedRows() {
       syncSelectChrome();
       applyConversationRemoval(deleted, lastRes);
     });
-  });
+  }, "删除后这些对话的消息记录无法恢复；项目文件夹里的文件和产物不会被删除。");
 }
 
 function setSearchOpen(open) {

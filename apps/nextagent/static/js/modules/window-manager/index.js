@@ -218,9 +218,11 @@ function _createWindowEl(id, options) {
     footerActions.forEach(function (action) {
       var btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "wm-footer-btn"
-        + (action.variant === "primary" ? " wm-footer-primary" : "")
-        + (action.variant === "danger" ? " wm-footer-danger" : "");
+      var variantClass = "";
+      if (action.variant === "primary") variantClass = " wm-footer-primary";
+      else if (action.variant === "danger") variantClass = " wm-footer-danger";
+      else if (action.variant === "danger-solid") variantClass = " wm-footer-danger-solid";
+      btn.className = "wm-footer-btn" + variantClass;
       btn.dataset.wmAction = action.id;
       btn.textContent = action.label;
       if (action.title) btn.title = action.title;
