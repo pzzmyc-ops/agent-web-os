@@ -16,6 +16,48 @@ from gateway.core.types import (
 
 _URL = "https://api.deepseek.com/v1/chat/completions"
 
+_AUTH_FAIL_HINT = (
+    "DeepSeek 官方 API Key 认证失败。"
+    "如果这个 Key 是刚刚创建、刚刚写入的，通常要等 1~2 分钟才会生效，请稍后重试；"
+    "若一直失败，请到 https://platform.deepseek.com 确认该 Key 仍然存在（没有被删除或重新生成），"
+    "并完整复制后再发一次，注意不要带空格或换行。"
+)
+
+
+def _friendly_error_body(status_code: int, body: Any) -> Any:
+    """把上游的英文错误翻成能照着做的中文提示。
+
+    DeepSeek 对刚创建、还没生效的 Key 也返回 401 "Your api key: ****xxxx is invalid",
+    原文看起来像 Key 填错了,用户会反复重建 Key。401 时直接换成一句中文提示
+    (纯文本,网关按原状态码回给前端,界面上不会再多套一层 JSON);
+    其余状态码和上游原文都原样保留(原文里带 request_id,排查时要用)。
+    """
+    if int(status_code) != 401:
+        return body
+    if isinstance(body, (bytes, bytearray)):
+        body = body.decode("utf-8", "replace")
+    upstream_message = ""
+    request_id = ""
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except Exception:
+            upstream_message = body
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            upstream_message = str(err.get("message") or upstream_message)
+            request_id = str(err.get("request_id") or "")
+        else:
+            upstream_message = upstream_message or json.dumps(body, ensure_ascii=False)
+    message = _AUTH_FAIL_HINT
+    if upstream_message:
+        message += "上游原文:" + upstream_message
+    if request_id:
+        message += "(request_id: " + request_id + ")"
+    return message
+
+
 
 def _pad_assistant_reasoning(payload: dict[str, Any]) -> None:
     if payload["thinking"]["type"] != "enabled":
@@ -125,7 +167,10 @@ class _OfficialDeepSeek(ModelAdapter):
                 async with upstream_client() as client:
                     async with client.stream("POST", _URL, json=payload, headers=headers) as resp:
                         if resp.status_code >= 400:
-                            raise UpstreamHttpError(status_code=resp.status_code, body=await resp.aread())
+                            raise UpstreamHttpError(
+                                status_code=resp.status_code,
+                                body=_friendly_error_body(resp.status_code, await resp.aread()),
+                            )
                         async for raw in resp.aiter_lines():
                             yield (raw + "\n").encode("utf-8")
                             if not raw.startswith("data: "):
@@ -147,7 +192,12 @@ class _OfficialDeepSeek(ModelAdapter):
         async with upstream_client() as client:
             resp = await client.post(_URL, json=payload, headers=headers)
         if resp.status_code >= 400:
-            raise UpstreamHttpError(status_code=resp.status_code, body=resp.json())
+            body = resp.text
+            try:
+                body = resp.json()
+            except Exception:
+                pass
+            raise UpstreamHttpError(status_code=resp.status_code, body=_friendly_error_body(resp.status_code, body))
         data = resp.json()
         u = data.get("usage") or {}
         result.usage = Usage(
