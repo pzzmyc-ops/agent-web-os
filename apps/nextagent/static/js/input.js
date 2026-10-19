@@ -1,5 +1,5 @@
 import { state, activeConv, taskMirror, taskToConv, getConvState } from "./state.js";
-import { addUserBubble, addSystemMsg, getChatAreaEl, enableAutoFollow, syncCurrentPageThinkToggle, setSendBtnSend, setSendBtnUploading, syncSendButton, markUserBubbleFailed, markUserBubbleQueued, markUserBubbleSuperseded, sendFailureText } from "./chat-ui.js";
+import { addUserBubble, addSystemMsg, getChatAreaEl, enableAutoFollow, syncCurrentPageThinkToggle, setSendBtnSend, setSendBtnUploading, syncSendButton, syncQueueSendBtn, markUserBubbleFailed, markUserBubbleQueued, markUserBubbleSuperseded, sendFailureText } from "./chat-ui.js";
 import { showTurnWaiting, removeTurnWaiting } from "./blocks-renderer.js";
 import { sendWsMsg, sendReliable, enqueueOutbox, isNetworkFailure } from "./ws.js";
 import { syncComposerForConv } from "./composer.js";
@@ -120,6 +120,7 @@ function _hasError() {
 
 function _syncSendBtn() {
   var cs = activeConv();
+  syncQueueSendBtn(cs);
   if (cs && cs.isStreaming) return;
   if (cs && cs.pendingSend) {
     syncSendButton();
@@ -540,6 +541,10 @@ function handleTextSendFailure(threadId, bubbleRow, msgData, reason) {
     });
     return;
   }
+  if (!bubbleRow) {
+    addSystemMsg("排队消息发送失败：" + sendFailureText(reason), cs ? cs.el : undefined);
+    return;
+  }
   markUserBubbleFailed(bubbleRow, reason, function () {
     retryTextSend(threadId, bubbleRow, msgData);
   });
@@ -583,11 +588,24 @@ function retryTextSend(threadId, bubbleRow, msgData) {
     syncComposerForConv(cs, "send_retry");
     syncSendButton();
   }
-  sendReliable("text", msgData, {
+  var wsId = sendReliable("text", msgData, {
     onFail: function (reason) {
       handleTextSendFailure(threadId, bubbleRow, msgData, reason);
     }
   });
+  _rememberSentBubble(cs, wsId, bubbleRow);
+}
+
+function _willQueue(cs) {
+  if (!cs) return false;
+  if (cs.isStreaming) return true;
+  return !!(cs.queueItems && cs.queueItems.length);
+}
+
+function _rememberSentBubble(cs, wsId, bubbleRow) {
+  if (!cs || !wsId || !bubbleRow) return;
+  if (!cs.sentBubbles) cs.sentBubbles = {};
+  cs.sentBubbles[String(wsId)] = bubbleRow;
 }
 
 export function sendPlainText(text) {
@@ -612,19 +630,24 @@ export function sendPlainText(text) {
     msgData.planMode = isPlanModeOn();
     enableAutoFollow();
     discardRevertedRows(cs);
-    var bubbleRow = addUserBubble(raw, []);
-    if (cs) {
+    var willQueue = _willQueue(cs);
+    var bubbleRow = null;
+    if (!willQueue) {
+      bubbleRow = addUserBubble(raw, []);
+    }
+    if (cs && !willQueue) {
       cs.pendingSend = true;
       showTurnWaiting(cs, "send_message");
       syncComposerForConv(cs, "send_message");
       syncSendButton();
     }
     var sendThreadId = msgData.threadId;
-    sendReliable("text", msgData, {
+    var wsId = sendReliable("text", msgData, {
       onFail: function (reason) {
         handleTextSendFailure(sendThreadId, bubbleRow, msgData, reason);
       }
     });
+    _rememberSentBubble(cs, wsId, bubbleRow);
   } finally {
     _isSending = false;
     _syncSendBtn();
@@ -702,8 +725,12 @@ export function sendText() {
   }
   enableAutoFollow();
   discardRevertedRows(cs);
-  var bubbleRow = addUserBubble(text, bubbleAttachments);
-  if (cs) {
+  var willQueue = _willQueue(cs);
+  var bubbleRow = null;
+  if (!willQueue) {
+    bubbleRow = addUserBubble(text, bubbleAttachments);
+  }
+  if (cs && !willQueue) {
     cs.pendingSend = true;
     showTurnWaiting(cs, "send_message");
     syncComposerForConv(cs, "send_message");
@@ -719,11 +746,12 @@ export function sendText() {
   }
 
   var sendThreadId = msgData.threadId;
-  sendReliable("text", msgData, {
+  var wsId = sendReliable("text", msgData, {
     onFail: function (reason) {
       handleTextSendFailure(sendThreadId, bubbleRow, msgData, reason);
     }
   });
+  _rememberSentBubble(cs, wsId, bubbleRow);
   } finally {
     _isSending = false;
     _syncSendBtn();
@@ -771,6 +799,13 @@ export function handleSendBtn() {
     return;
   }
   if (cs && cs.pendingSend) return;
+  sendText();
+}
+
+export function handleQueueSendBtn() {
+  if (_isSending || _hasUploading()) return;
+  var cs = activeConv();
+  if (!cs || !cs.isStreaming) return;
   sendText();
 }
 

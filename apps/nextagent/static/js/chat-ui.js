@@ -1,5 +1,6 @@
 import { state, activeConv, getConvState } from "./state.js";
 import { syncComposerForConv } from "./composer.js";
+import { renderQueuePanel } from "./queue-panel.js";
 import { formatContent, initImageLoaders } from "./format.js";
 import { stampWorkspaceUrlsInRoot } from "./asset-url.js";
 import { logAssetHtml, logAssetUrl, probeAssetImg, snapshotImgSrc } from "./asset-diag.js";
@@ -1729,11 +1730,26 @@ export function setSendBtnSend() {
   btn.disabled = false;
 }
 
+function composerDraftText() {
+  var input = document.getElementById("msgInput");
+  return input ? input.value.trim() : "";
+}
+
+export function syncQueueSendBtn(cs) {
+  var btn = document.getElementById("queueSendBtn");
+  if (!btn) return;
+  var conv = cs || activeConv();
+  var generating = !!(conv && conv.isStreaming);
+  btn.hidden = !(generating && composerDraftText());
+}
+
 export function syncSendButton() {
   var cs = activeConv();
   if (!cs) {
     setComposerLocked(false);
     setSendBtnSend();
+    syncQueueSendBtn(null);
+    renderQueuePanel(null);
     return;
   }
   var action = syncComposerForConv(cs);
@@ -1742,6 +1758,8 @@ export function syncSendButton() {
   else if (action.mode === "stop") setSendBtnStop();
   else if (action.mode === "waiting") setSendBtnWaiting();
   else setSendBtnSend();
+  syncQueueSendBtn(cs);
+  renderQueuePanel(cs);
 }
 
 function setComposerLocked(locked) {

@@ -108,6 +108,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div id="planReviewHost"></div>
+        <div id="queuePanel" class="queue-panel" hidden></div>
         <div class="input-box">
           <div class="attachment-preview" id="attachmentPreview"></div>
           <textarea id="msgInput" placeholder="输入消息... (Enter发送, Shift+Enter换行)" rows="1"></textarea>
@@ -134,6 +135,7 @@
               </button>
             </div>
             <div class="input-actions">
+              <button type="button" class="send-btn queue-send" id="queueSendBtn" title="加入队列，等当前回合结束后发送" hidden><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
               <button type="button" class="send-btn" id="sendBtn" title="发送"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
             </div>
           </div>

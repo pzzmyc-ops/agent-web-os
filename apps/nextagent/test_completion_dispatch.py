@@ -17,7 +17,7 @@ from apps.nextagent.maf_tools.session_key import (
     set_current_session_key,
 )
 from apps.nextagent.message_runner import dispatch_process_completions
-from apps.nextagent.turn_queue import UserItem, depth, note_stop, reset
+from apps.nextagent.turn_queue import UserItem, depth, remove, reset, snapshot
 from apps.nextagent.toolkit._context import TurnContext, bind_turn
 from apps.nextagent.toolkit.terminal import terminal
 from fm.backend.terminal import HostedSession
@@ -326,9 +326,13 @@ class DispatchTests(unittest.TestCase):
 
         enqueue("thread-a", first)
         enqueue("thread-a", second)
-        self.assertEqual(note_stop("thread-a", True), "current")
         self.assertEqual(depth("thread-a"), 2)
-        self.assertEqual(note_stop("thread-a", False), "next")
-        self.assertEqual(note_stop("thread-a", False), "next")
-        self.assertEqual(note_stop("thread-a", False), "none")
-        self.assertEqual(depth("thread-a"), 2)
+        items = snapshot("thread-a")
+        self.assertEqual([it["content"] for it in items], ["one", "two"])
+        self.assertEqual([it["kind"] for it in items], ["user", "user"])
+        self.assertTrue(items[0]["id"])
+        self.assertNotEqual(items[0]["id"], items[1]["id"])
+        self.assertFalse(remove("thread-a", "missing"))
+        self.assertTrue(remove("thread-a", items[0]["id"]))
+        self.assertEqual([it["content"] for it in snapshot("thread-a")], ["two"])
+        self.assertEqual(depth("thread-a"), 1)

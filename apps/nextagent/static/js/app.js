@@ -2,9 +2,9 @@ import { state, getConvState, initConv, activeConv } from "./state.js";
 import { API_BASE } from "./config.js";
 import { naFetch } from "./http.js";
 import { connect, sendWsMsg, sendReliable, enqueueOutbox, isNetworkFailure } from "./ws.js";
-import { handleSendBtn, handleInputKey, autoResize, handleUploadBtn, handleFileSelect, toggleToolDropdown, closeToolDropdown, fetchSkills, toggleModelDropdown, closeModelDropdown, refreshPendingAttachmentsUi, switchComposerThread, persistComposerDraft, bindWindowFileIO, snapshotComposerSession, applyComposerSession, selectSkill } from "./input.js";
+import { handleSendBtn, handleQueueSendBtn, handleInputKey, autoResize, handleUploadBtn, handleFileSelect, toggleToolDropdown, closeToolDropdown, fetchSkills, toggleModelDropdown, closeModelDropdown, refreshPendingAttachmentsUi, switchComposerThread, persistComposerDraft, bindWindowFileIO, snapshotComposerSession, applyComposerSession, selectSkill } from "./input.js";
 import { closeEffortDropdown, fetchModelsCatalog, initModelControls, applySessionModelState, snapshotSessionModel } from "./model-controls.js";
-import { setSendBtnSend, enableAutoFollow, initScrollFollowBtn, mountChatArea } from "./chat-ui.js";
+import { setSendBtnSend, syncQueueSendBtn, enableAutoFollow, initScrollFollowBtn, mountChatArea } from "./chat-ui.js";
 import {
   fetchConversations,
   createConversation,
@@ -178,6 +178,7 @@ document.addEventListener("click", function () {
   closeEffortDropdown();
 });
 document.getElementById("sendBtn").onclick = handleSendBtn;
+document.getElementById("queueSendBtn").onclick = handleQueueSendBtn;
 document.getElementById("uploadBtn").onclick = handleUploadBtn;
 var planModeBtn = document.getElementById("planModeBtn");
 if (planModeBtn) {
@@ -192,6 +193,7 @@ msgInput.onkeydown = handleInputKey;
 msgInput.oninput = function () {
   autoResize(msgInput);
   persistComposerDraft();
+  syncQueueSendBtn();
 };
 bindWindowFileIO();
 bindFeishuWebhookUi(markFeishuWebhookBound);

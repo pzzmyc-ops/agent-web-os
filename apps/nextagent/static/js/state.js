@@ -134,6 +134,9 @@ export function initConv(convId, el) {
     liveTaskId: "",
     pendingMessages: [],
     taskBubbles: {},
+    queueItems: [],
+    sentBubbles: {},
+    acceptedBubbleTasks: {},
     planDoc: null,
     sessionUi: null
   };

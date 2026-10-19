@@ -1,8 +1,9 @@
 import { state, activeConv, getConvState, taskToConv, convCache, taskMirror, taskLastSeq } from "./state.js";
 import { syncComposerForConv, findChatInflightTask } from "./composer.js";
-import { resumeAllInflightTasks, requestTaskResume, resolvePendingAck, rejectPendingAck, discardPendingAck, pendingAckRetryCount, flushOutbox } from "./ws.js";
+import { resumeAllInflightTasks, requestTaskResume, resolvePendingAck, rejectPendingAck, discardPendingAck, pendingAckRetryCount, flushOutbox, rootMessageId } from "./ws.js";
 import { resolveFileUrl } from "./asset-url.js";
 import { messageBus } from "./message-bus.js";
+import { applyQueueState } from "./queue-panel.js";
 import {
   addSystemMsg,
   addUserBubble,
@@ -427,18 +428,45 @@ messageBus.on("tasks_snapshot", function () {
   syncSendButton();
 });
 
+function _takeSentBubble(cs, messageId) {
+  if (!cs || !cs.sentBubbles) return null;
+  var key = rootMessageId(messageId);
+  var row = cs.sentBubbles[key] || null;
+  if (row) delete cs.sentBubbles[key];
+  return row;
+}
+
+function _dropBubbleRow(cs, row) {
+  if (!row || !row.parentNode) return;
+  var area = row.parentNode;
+  area.removeChild(row);
+  var known = parseInt(area.dataset.userCount, 10) || 0;
+  if (known > 0) area.dataset.userCount = String(known - 1);
+  if (cs && cs.pendingSend) {
+    cs.pendingSend = false;
+    removeTurnWaiting(cs);
+  }
+}
+
 messageBus.on("message_queued", function (msg) {
   var data = (msg && msg.data) || {};
   var threadId = data.threadId || "";
   resolvePendingAck(data.messageId || "");
   var cs = threadId ? getConvState(threadId) : activeConv();
   if (!cs) return;
-  if (!cs.queuedEcho) cs.queuedEcho = [];
-  cs.queuedEcho.push(String(data.content || ""));
+  _dropBubbleRow(cs, _takeSentBubble(cs, data.messageId));
   cs.pendingSend = false;
   cs.outboxFlushing = false;
   syncComposerForConv(cs, "message_queued");
   if (!threadId || threadId === state.currentConversationId) syncSendButton();
+});
+
+messageBus.on("queue_state", function (msg) {
+  var data = (msg && msg.data) || {};
+  var threadId = data.threadId || "";
+  if (!threadId) return;
+  applyQueueState(threadId, data.items || []);
+  if (threadId === state.currentConversationId) syncSendButton();
 });
 
 messageBus.on("message_accepted", function (msg) {
@@ -450,6 +478,11 @@ messageBus.on("message_accepted", function (msg) {
   var threadId = msg.data.threadId || "";
   var cs = threadId ? getConvState(threadId) : activeConv();
   if (cs) {
+    var acceptedRow = _takeSentBubble(cs, msg.data.messageId);
+    if (acceptedRow && msg.data.taskId) {
+      if (!cs.acceptedBubbleTasks) cs.acceptedBubbleTasks = {};
+      cs.acceptedBubbleTasks[String(msg.data.taskId)] = true;
+    }
     cs.outboxFlushing = false;
     clearThreadSendFailures(cs);
     syncComposerForConv(cs, "message_accepted");
@@ -753,16 +786,15 @@ messageBus.on("stream_start", function (msg) {
   } else {
     cs.blkTimelineEl = null;
     cs.blkTimelineRow = null;
-    var echoed = false;
-    if (!d.isAgentRecall && cs.queuedEcho && cs.queuedEcho.length && String(cs.queuedEcho[0]) === String(d.content || "")) {
-      cs.queuedEcho.shift();
-      echoed = true;
-    }
-    if (cs.pendingSend) {
-      cs.pendingSend = false;
+    var taskKey = String(d.taskId || "");
+    var bubbleShown = !!(cs.acceptedBubbleTasks && cs.acceptedBubbleTasks[taskKey]);
+    if (bubbleShown) delete cs.acceptedBubbleTasks[taskKey];
+    cs.pendingSend = false;
+    if (bubbleShown) {
+      cs.editingUserMessageIndex = null;
     } else if (cs.editingUserMessageIndex) {
       cs.editingUserMessageIndex = null;
-    } else if (!echoed && d.content) {
+    } else if (d.content) {
       if (d.isAgentRecall) {
         renderAgentRecallTrigger(cs, d.content, d.recallSource || "", d.taskId || "");
       } else {

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -16,16 +17,19 @@ class UserItem:
     plan_mode: bool
     active_roles: list
     skip_handoff: bool
+    item_id: str = ""
+    queued_at: int = 0
 
 
 @dataclass
 class ReportItem:
     content: str
     group_chat: bool
+    item_id: str = ""
+    queued_at: int = 0
 
 
 _queues: dict[str, deque] = {}
-_stop_ahead: dict[str, int] = {}
 _hold: set[str] = set()
 
 
@@ -37,6 +41,12 @@ def depth(thread_id: str) -> int:
 
 
 def enqueue(thread_id: str, item: UserItem | ReportItem) -> int:
+    import time
+
+    if not item.item_id:
+        item.item_id = "q_" + uuid.uuid4().hex[:12]
+    if not item.queued_at:
+        item.queued_at = int(time.time() * 1000)
     queued = _queues.get(thread_id)
     if queued is None:
         queued = deque()
@@ -55,31 +65,58 @@ def pop(thread_id: str) -> UserItem | ReportItem | None:
     return item
 
 
-def note_stop(thread_id: str, current_is_running: bool) -> str:
-    if current_is_running:
-        return "current"
-    if arm_next_stop(thread_id):
-        return "next"
-    return "none"
-
-
-def arm_next_stop(thread_id: str) -> bool:
-    armed = _stop_ahead.get(thread_id, 0)
-    if armed >= depth(thread_id):
+def remove(thread_id: str, item_id: str) -> bool:
+    queued = _queues.get(thread_id)
+    if not queued:
         return False
-    _stop_ahead[thread_id] = armed + 1
-    return True
+    for item in queued:
+        if item.item_id == item_id:
+            queued.remove(item)
+            if not queued:
+                del _queues[thread_id]
+            return True
+    return False
 
 
-def take_armed_stop(thread_id: str) -> bool:
-    armed = _stop_ahead.get(thread_id, 0)
-    if armed <= 0:
-        return False
-    if armed == 1:
-        del _stop_ahead[thread_id]
-    else:
-        _stop_ahead[thread_id] = armed - 1
-    return True
+def _attachment_names(attachments: list) -> list[str]:
+    names: list[str] = []
+    for att in attachments or []:
+        if isinstance(att, dict):
+            names.append(str(att.get("filename") or att.get("path") or att.get("media_id") or ""))
+        else:
+            names.append(str(att))
+    return names
+
+
+def snapshot(thread_id: str) -> list[dict]:
+    queued = _queues.get(thread_id)
+    if not queued:
+        return []
+    out: list[dict] = []
+    for item in queued:
+        if isinstance(item, UserItem):
+            out.append({
+                "id": item.item_id,
+                "kind": "user",
+                "content": item.content,
+                "attachments": _attachment_names(item.attachments),
+                "model": item.model,
+                "queuedAt": item.queued_at,
+            })
+        else:
+            out.append({
+                "id": item.item_id,
+                "kind": "report",
+                "content": item.content,
+                "attachments": [],
+                "model": "",
+                "queuedAt": item.queued_at,
+            })
+    return out
+
+
+def threads_with_items() -> list[str]:
+    return [tid for tid, queued in _queues.items() if queued]
 
 
 def hold(thread_id: str) -> None:
@@ -96,5 +133,4 @@ def held(thread_id: str) -> bool:
 
 def reset(thread_id: str) -> None:
     _queues.pop(thread_id, None)
-    _stop_ahead.pop(thread_id, None)
     _hold.discard(thread_id)

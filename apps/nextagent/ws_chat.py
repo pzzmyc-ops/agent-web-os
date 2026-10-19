@@ -426,7 +426,7 @@ def _pump_done(task: asyncio.Task) -> None:
 
 
 async def _pump(web_agent, store, thread_id: str) -> None:
-    from .turn_queue import ReportItem, held, pop, take_armed_stop
+    from .turn_queue import ReportItem, held, pop
 
     if held(thread_id) or thread_id in _pumping or thread_is_busy(thread_id):
         return
@@ -437,13 +437,23 @@ async def _pump(web_agent, store, thread_id: str) -> None:
         item = pop(thread_id)
         if item is None:
             return
-        pre_stop = take_armed_stop(thread_id)
         if isinstance(item, ReportItem):
-            _launch_report(web_agent, store, thread_id, item.content, item.group_chat, pre_stop)
+            _launch_report(web_agent, store, thread_id, item.content, item.group_chat)
         else:
-            _launch_user(web_agent, store, thread_id, item, pre_stop, None)
+            _launch_user(web_agent, store, thread_id, item, None)
+        publish_queue(thread_id)
     finally:
         _pumping.discard(thread_id)
+
+
+def _queue_state_frame(thread_id: str) -> dict:
+    from .turn_queue import snapshot
+
+    return _control("queue_state", {"threadId": thread_id, "items": snapshot(thread_id)})
+
+
+def publish_queue(thread_id: str) -> None:
+    asyncio.create_task(broadcast(_queue_state_frame(thread_id)))
 
 
 async def _broadcast_title(store, thread_id: str, content: str) -> None:
@@ -462,13 +472,10 @@ def _launch_report(
     thread_id: str,
     content: str,
     group_chat: bool,
-    pre_stop: bool,
 ) -> None:
     from .message_runner import _wakeup_done, _wakeup_group, _wakeup_web
 
     task_id = "proc_" + uuid.uuid4().hex[:12]
-    if pre_stop:
-        _cancelled_tasks.add(task_id)
     mark_thread_task(thread_id, task_id)
 
     async def runner() -> None:
@@ -492,12 +499,9 @@ def _launch_user(
     store,
     thread_id: str,
     item,
-    pre_stop: bool,
     local_tasks: dict[str, asyncio.Task] | None,
 ) -> None:
     task_id = "task_" + uuid.uuid4().hex[:12]
-    if pre_stop:
-        _cancelled_tasks.add(task_id)
     emitter = TurnEmitter(broadcast, task_id=task_id, thread_id=thread_id)
     mark_thread_task(thread_id, task_id)
 
@@ -626,6 +630,10 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     if snap is None:
                         continue
                     await send(_turn_resume_frame(snap, mid))
+                from .turn_queue import threads_with_items
+
+                for queued_thread in threads_with_items():
+                    await send(_queue_state_frame(queued_thread))
 
             elif mtype == "ping":
                 await send(_control("pong", {"serverTime": _now_ms(), "connectionId": data.get("connectionId", "")}))
@@ -640,6 +648,18 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     if focus_thread and snap.thread_id != focus_thread:
                         continue
                     await send(_turn_resume_frame(snap, mid))
+                if focus_thread:
+                    await send(_queue_state_frame(focus_thread))
+
+            elif mtype == "queue_remove":
+                from .turn_queue import remove
+
+                thread_id = str(data.get("threadId") or "").strip()
+                item_id = str(data.get("itemId") or "").strip()
+                if not thread_id or not item_id:
+                    raise RuntimeError("queue_remove missing threadId or itemId")
+                remove(thread_id, item_id)
+                await broadcast(_queue_state_frame(thread_id))
 
             elif mtype == "resume":
                 # 前端重连后报上它见过的最后一个 seq,把它没见过的事件按原序号补发。
@@ -665,14 +685,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                                 break
                     if not tid and thread_id:
                         tid = _thread_active_tasks.get(thread_id, "")
-                    from .turn_queue import note_stop
-
-                    current_is_running = bool(tid) and tid not in _cancelled_tasks
-                    if thread_id:
-                        decision = note_stop(thread_id, current_is_running)
-                    else:
-                        decision = "current" if current_is_running else "none"
-                    if decision == "current":
+                    if tid and tid not in _cancelled_tasks:
                         _cancel_task(tid, thread_id, tasks)
                         from .web_server import dingtalk_bot
 
@@ -838,13 +851,15 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                         {
                             "threadId": thread_id,
                             "messageId": mid,
+                            "itemId": item.item_id,
                             "content": content,
                             "depth": queued,
                         },
                         status="queued",
                     ))
+                    await broadcast(_queue_state_frame(thread_id))
                     continue
-                _launch_user(web_agent, store, thread_id, item, False, tasks)
+                _launch_user(web_agent, store, thread_id, item, tasks)
 
             elif mtype == "add_role":
                 thread_id = str(data.get("threadId") or "").strip() or store.current_thread()

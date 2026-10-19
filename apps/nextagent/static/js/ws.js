@@ -129,7 +129,15 @@ function handleAckTimeout(wsId) {
     if (entry.onFail) entry.onFail("connection_down", wsId);
     return;
   }
+  messageIdAliases[retryId] = messageIdAliases[wsId] || wsId;
   registerPendingAck(retryId, entry.type, entry.data, entry.retryCount + 1, entry.onAck, entry.onFail);
+}
+
+export var messageIdAliases = {};
+
+export function rootMessageId(messageId) {
+  var key = String(messageId || "");
+  return messageIdAliases[key] || key;
 }
 
 export function sendReliable(type, data, callbacks) {

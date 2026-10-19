@@ -147,7 +147,7 @@ async def dispatch_process_completions(web_agent, store) -> None:
             process_registry.completion_queue.put(evt)
         raise
     from .turn_queue import ReportItem, enqueue
-    from .ws_chat import schedule_pump
+    from .ws_chat import publish_queue, schedule_pump
 
     errors: list[str] = []
     by_thread: dict[str, list[str]] = {}
@@ -162,6 +162,7 @@ async def dispatch_process_completions(web_agent, store) -> None:
         group_chat = mode.is_bound_thread(thread_id)
         for body in bodies:
             enqueue(thread_id, ReportItem(content=body, group_chat=group_chat))
+        publish_queue(thread_id)
         schedule_pump(web_agent, store, thread_id)
     if errors:
         raise RuntimeError("process notification 无法投递: " + "; ".join(errors))
