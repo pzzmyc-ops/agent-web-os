@@ -257,7 +257,10 @@ export function connect() {
       messageId: createMessageId(),
       timestamp: Date.now(),
       topic: "chat",
-      data: { threadId: state.currentConversationId || "" }
+      data: {
+        threadId: state.currentConversationId || "",
+        desktopId: new URLSearchParams(location.search).get("desktopId") || "",
+      }
     }));
   };
 

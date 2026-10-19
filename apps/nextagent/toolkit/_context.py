@@ -51,6 +51,18 @@ class TurnContext:
     file_delete_count: int = 0
     file_delete_warns: int = 0
     grep_cache: dict | None = None
+    desktop_id: str = ""
+
+
+_desktop_id: ContextVar[str] = ContextVar("toolkit_desktop_id", default="")
+
+
+def set_desktop_id(desktop_id: str) -> None:
+    _desktop_id.set(desktop_id or "")
+
+
+def get_desktop_id() -> str:
+    return _desktop_id.get()
 
 
 _current: ContextVar[TurnContext | None] = ContextVar("toolkit_turn_context", default=None)

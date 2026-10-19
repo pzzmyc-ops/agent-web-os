@@ -115,11 +115,13 @@ const WM = {
     return this.z;
   },
 
-  create({ id, title, icon, width = 900, height = 560, x, y, content, className = "", titleHtml = "" }) {
+  create({ id, title, icon, width = 900, height = 560, x, y, content, className = "", titleHtml = "", focus = true }) {
     if (this.windows.has(id)) {
-      this.focus(id);
       const exist = this.windows.get(id);
-      if (exist.minimized) this.restore(id);
+      if (focus) {
+        this.focus(id);
+        if (exist.minimized) this.restore(id);
+      }
       return exist;
     }
     const el = document.createElement("div");
@@ -136,7 +138,16 @@ const WM = {
     el.style.height = `${height}px`;
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
-    el.style.zIndex = String(this.nextZ());
+    let z = this.nextZ();
+    if (!focus) {
+      let topZ = 0;
+      this.windows.forEach((w) => {
+        const n = parseInt(w.el.style.zIndex, 10) || 0;
+        if (n > topZ) topZ = n;
+      });
+      if (topZ > 1) z = topZ - 1;
+    }
+    el.style.zIndex = String(z);
     const titleInner = titleHtml || String(title)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
@@ -176,9 +187,16 @@ const WM = {
     this.windows.set(id, win);
     this.layer.appendChild(el);
     this.bindWindow(win);
-    if (recalled && recalled.maximized) this.toggleMaximize(id);
+    if (recalled && recalled.maximized) {
+      if (focus) this.toggleMaximize(id);
+      else {
+        win.maximized = true;
+        win.el.classList.add("maximized");
+        this._paintMaxBtn(win);
+      }
+    }
     this.renderTaskbar();
-    this.focus(id);
+    if (focus) this.focus(id);
     return win;
   },
 

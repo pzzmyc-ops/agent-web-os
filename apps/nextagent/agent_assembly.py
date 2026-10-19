@@ -67,7 +67,9 @@ def _turn_memory_block(store, thread_id: str) -> str:
 
 
 def turn_system_prefix(*, group_chat: bool, store, thread_id: str) -> str:
-    parts = [_turn_clock_line(), _turn_origin_note(group_chat=group_chat)]
+    from .toolkit.terminal import terminal_windows_note
+
+    parts = [_turn_clock_line(), _turn_origin_note(group_chat=group_chat), terminal_windows_note()]
     mem = _turn_memory_block(store, thread_id)
     if mem:
         parts.append(mem)

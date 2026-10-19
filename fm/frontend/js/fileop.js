@@ -38,10 +38,15 @@ function fileOpTitle(task) {
   if (task.phase === "scan") {
     if (task.op === "delete") return "正在计算要删除的项目";
     if (task.op === "move") return "正在计算要移动的项目";
+    if (task.op === "zip") return "正在计算要压缩的项目";
     return "正在计算要复制的项目";
   }
   const count = formatCount(task.totalFiles);
   if (task.op === "delete") return "正在删除 " + count + " 个项目";
+  if (task.op === "zip") {
+    return "正在将 " + count + " 个项目压缩为 <span class=\"fop-place\">"
+      + escapeFileOp(task.destLabel) + "</span>";
+  }
   const verb = task.op === "move" ? "移动" : "复制";
   return "正在将 " + count + " 个项目从 <span class=\"fop-place\">"
     + escapeFileOp(task.srcLabel) + "</span> " + verb + "到 <span class=\"fop-place\">"
@@ -134,11 +139,12 @@ function bindFileOpDrag(root, handle) {
 }
 
 const FileOp = {
-  run(op, paths, dest) {
+  run(op, paths, dest, name) {
     const list = paths || [];
     const target = dest || "";
+    const archiveName = name || "";
     return new Promise((resolve, reject) => {
-      API.post("/api/fileop/start", { op, paths: list, dest: target }).then((res) => {
+      API.post("/api/fileop/start", { op, paths: list, dest: target, name: archiveName }).then((res) => {
         this.mount(res.data, list, target, resolve, reject);
       }).catch(reject);
     });

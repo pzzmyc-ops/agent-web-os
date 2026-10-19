@@ -146,7 +146,7 @@ def _reasoning_params(data: dict) -> tuple[bool | None, str | None]:
     return thinking, effort
 
 
-async def _plain_assistant_turn(store, thread_id: str, message_id: str, text: str, *, user_content: str = "") -> None:
+async def _plain_assistant_turn(web_agent, store, thread_id: str, message_id: str, text: str, *, user_content: str = "") -> None:
     task_id = "task_" + uuid.uuid4().hex[:12]
     emitter = TurnEmitter(broadcast, task_id=task_id, thread_id=thread_id)
     blocks = TextBlocks(emitter, store, task_id=task_id, thread_id=thread_id)
@@ -200,9 +200,10 @@ async def _plain_assistant_turn(store, thread_id: str, message_id: str, text: st
     finally:
         if _thread_active_tasks.get(thread_id) == task_id:
             _thread_active_tasks.pop(thread_id, None)
+        schedule_pump(web_agent, store, thread_id)
 
 
-async def _plain_notice_turn(store, thread_id: str, message_id: str, text: str) -> None:
+async def _plain_notice_turn(web_agent, store, thread_id: str, message_id: str, text: str) -> None:
     task_id = "task_" + uuid.uuid4().hex[:12]
     emitter = TurnEmitter(broadcast, task_id=task_id, thread_id=thread_id)
     blocks = TextBlocks(emitter, store, task_id=task_id, thread_id=thread_id)
@@ -254,6 +255,7 @@ async def _plain_notice_turn(store, thread_id: str, message_id: str, text: str) 
     finally:
         if _thread_active_tasks.get(thread_id) == task_id:
             _thread_active_tasks.pop(thread_id, None)
+        schedule_pump(web_agent, store, thread_id)
 
 
 def _official_deepseek(model: str) -> bool:
@@ -405,6 +407,146 @@ def _cancel_task(tid: str, thread_id: str, local_tasks: dict[str, asyncio.Task])
         task.cancel()
 
 
+_pumping: set[str] = set()
+
+
+def schedule_pump(web_agent, store, thread_id: str) -> None:
+    task = asyncio.create_task(_pump(web_agent, store, thread_id))
+    task.add_done_callback(_pump_done)
+
+
+def _pump_done(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        import logging
+
+        logging.getLogger("mafagent.ws").error("队列启动失败: %s", exc)
+
+
+async def _pump(web_agent, store, thread_id: str) -> None:
+    from .turn_queue import ReportItem, held, pop, take_armed_stop
+
+    if held(thread_id) or thread_id in _pumping or thread_is_busy(thread_id):
+        return
+    _pumping.add(thread_id)
+    try:
+        if held(thread_id) or thread_is_busy(thread_id):
+            return
+        item = pop(thread_id)
+        if item is None:
+            return
+        pre_stop = take_armed_stop(thread_id)
+        if isinstance(item, ReportItem):
+            _launch_report(web_agent, store, thread_id, item.content, item.group_chat, pre_stop)
+        else:
+            _launch_user(web_agent, store, thread_id, item, pre_stop, None)
+    finally:
+        _pumping.discard(thread_id)
+
+
+async def _broadcast_title(store, thread_id: str, content: str) -> None:
+    if store.thread_title(thread_id) != DEFAULT_TITLE:
+        return
+    title = content.strip().replace("\n", " ")[:20] or DEFAULT_TITLE
+    if title == DEFAULT_TITLE:
+        return
+    store.rename_thread(thread_id, title)
+    await broadcast(_control("title_updated", {"threadId": thread_id, "title": title}))
+
+
+def _launch_report(
+    web_agent,
+    store,
+    thread_id: str,
+    content: str,
+    group_chat: bool,
+    pre_stop: bool,
+) -> None:
+    from .message_runner import _wakeup_done, _wakeup_group, _wakeup_web
+
+    task_id = "proc_" + uuid.uuid4().hex[:12]
+    if pre_stop:
+        _cancelled_tasks.add(task_id)
+    mark_thread_task(thread_id, task_id)
+
+    async def runner() -> None:
+        try:
+            if group_chat:
+                await _wakeup_group(thread_id, content, task_id)
+            else:
+                await _wakeup_web(web_agent, store, thread_id, content, task_id)
+        finally:
+            unregister_runner_task(thread_id, asyncio.current_task())
+            schedule_pump(web_agent, store, thread_id)
+
+    task = asyncio.create_task(runner())
+    task.add_done_callback(_wakeup_done)
+    register_wakeup_task(task_id, task)
+    register_runner_task(thread_id, task)
+
+
+def _launch_user(
+    web_agent,
+    store,
+    thread_id: str,
+    item,
+    pre_stop: bool,
+    local_tasks: dict[str, asyncio.Task] | None,
+) -> None:
+    task_id = "task_" + uuid.uuid4().hex[:12]
+    if pre_stop:
+        _cancelled_tasks.add(task_id)
+    emitter = TurnEmitter(broadcast, task_id=task_id, thread_id=thread_id)
+    mark_thread_task(thread_id, task_id)
+
+    async def runner() -> None:
+        try:
+            _truncate_to_cursor(store, thread_id)
+            asyncio.create_task(_broadcast_title(store, thread_id, item.content))
+            if item.active_roles and not item.skip_handoff:
+                await run_handoff_turn(
+                    web_agent, emitter, store,
+                    content=item.content,
+                    message_id=item.message_id,
+                    model=item.model,
+                    roles=item.active_roles,
+                    is_cancelled=lambda: task_id in _cancelled_tasks,
+                    attachments=item.attachments,
+                    media_passthrough=item.media_passthrough,
+                    thinking=item.thinking,
+                    reasoning_effort=item.effort,
+                    plan_mode=item.plan_mode,
+                )
+            else:
+                await run_turn(
+                    web_agent, emitter,
+                    content=item.content,
+                    message_id=item.message_id,
+                    model=item.model,
+                    is_cancelled=lambda: task_id in _cancelled_tasks,
+                    attachments=item.attachments,
+                    media_passthrough=item.media_passthrough,
+                    thinking=item.thinking,
+                    reasoning_effort=item.effort,
+                    plan_mode=item.plan_mode,
+                    group_chat=False,
+                )
+        finally:
+            if local_tasks is not None:
+                local_tasks.pop(task_id, None)
+            clear_cancelled_task(task_id)
+            unregister_runner_task(thread_id, asyncio.current_task())
+            unmark_thread_task(thread_id, task_id)
+            schedule_pump(web_agent, store, thread_id)
+
+    task = asyncio.create_task(runner())
+    register_runner_task(thread_id, task)
+    if local_tasks is not None:
+        local_tasks[task_id] = task
+
+
 @router.websocket("/api/v1/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
@@ -433,15 +575,6 @@ async def ws_endpoint(websocket: WebSocket) -> None:
 
     tasks: dict[str, asyncio.Task] = {}
 
-    async def maybe_title(thread_id: str, content: str) -> None:
-        if store.thread_title(thread_id) != DEFAULT_TITLE:
-            return
-        title = content.strip().replace("\n", " ")[:20] or DEFAULT_TITLE
-        if title == DEFAULT_TITLE:
-            return
-        store.rename_thread(thread_id, title)
-        await send(_control("title_updated", {"threadId": thread_id, "title": title}))
-
     try:
         while True:
             raw = await websocket.receive_text()
@@ -454,6 +587,9 @@ async def ws_endpoint(websocket: WebSocket) -> None:
             mid = msg.get("messageId", "")
 
             if mtype == "auth":
+                from .toolkit import set_desktop_id
+
+                set_desktop_id(str(data.get("desktopId") or ""))
                 cur = store.ensure_initial_thread()
                 from .web_server import dingtalk_bot
 
@@ -529,15 +665,22 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                                 break
                     if not tid and thread_id:
                         tid = _thread_active_tasks.get(thread_id, "")
-                    _cancel_task(tid, thread_id, tasks)
-                    from .web_server import dingtalk_bot
+                    from .turn_queue import note_stop
 
-                    dingtalk_bot.cancel_if_match(tid, thread_id)
+                    current_is_running = bool(tid) and tid not in _cancelled_tasks
                     if thread_id:
-                        from .plan_mode import abandon_plan
+                        decision = note_stop(thread_id, current_is_running)
+                    else:
+                        decision = "current" if current_is_running else "none"
+                    if decision == "current":
+                        _cancel_task(tid, thread_id, tasks)
+                        from .web_server import dingtalk_bot
 
-                        abandon_plan(store, thread_id)
-                        drop_thread_completions(thread_id)
+                        dingtalk_bot.cancel_if_match(tid, thread_id)
+                        if thread_id:
+                            from .plan_mode import abandon_plan
+
+                            abandon_plan(store, thread_id)
 
             elif mtype == "clarify_respond":
                 # 用户回答了 clarify 的提问(点了选项或自己打字)。
@@ -639,7 +782,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     _apply_deepseek_api_key(content)
                     _awaiting_deepseek_key = False
                     await send(_control("deepseek_key_saved", {"threadId": thread_id}))
-                    await _plain_notice_turn(store, thread_id, mid, DEEPSEEK_KEY_SAVED)
+                    await _plain_notice_turn(web_agent, store, thread_id, mid, DEEPSEEK_KEY_SAVED)
                     continue
                 if not keyed and _awaiting_deepseek_key:
                     _awaiting_deepseek_key = False
@@ -654,7 +797,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     _awaiting_deepseek_key = True
                     _truncate_to_cursor(store, thread_id)
                     await _plain_assistant_turn(
-                        store, thread_id, mid, ASK_DEEPSEEK_KEY, user_content=content,
+                        web_agent, store, thread_id, mid, ASK_DEEPSEEK_KEY, user_content=content,
                     )
                     continue
                 from .store import APP_FEISHU_WEBHOOK
@@ -666,79 +809,42 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                         status="rejected",
                     ))
                     continue
-                if thread_id in _thread_active_tasks:
-                    import logging
-                    logging.getLogger("mafagent.ws").warning(
-                        "reject text: thread %s has active task %s", thread_id, _thread_active_tasks[thread_id]
-                    )
-                    await send(_control(
-                        "message_rejected",
-                        {"threadId": thread_id, "messageId": mid, "reason": "task_active"},
-                        status="rejected",
-                    ))
-                    continue
-                _truncate_to_cursor(store, thread_id)
                 media_passthrough = bool(data.get("mediaPassthrough"))
                 thinking, effort = _reasoning_params(data)
                 plan_mode = bool(data.get("planMode"))
+                from .turn_queue import UserItem, depth, enqueue, held
                 from .web_server import dingtalk_bot
 
                 bound = dingtalk_bot.is_bound_thread(thread_id)
                 webhook_app = store.thread_app(thread_id) == APP_FEISHU_WEBHOOK
                 if bound:
                     plan_mode = False
-                task_id = "task_" + uuid.uuid4().hex[:12]
-                # 回合事件广播给所有在线连接,不绑发起它的这一条:同一对话开了几个窗口
-                # 就几个窗口同时看到流;这条连接断了,别的窗口和重连后的窗口照样收。
-                emitter = TurnEmitter(broadcast, task_id=task_id, thread_id=thread_id)
-
-                active_roles = store.get_active_roles(thread_id)
-
-                async def runner(
-                    em=emitter,
-                    tid=task_id,
-                    th=thread_id,
-                    ct=content,
-                    md=model,
-                    m_id=mid,
-                    att=attachments,
-                    mp=media_passthrough,
-                    ar=active_roles,
-                    tk=thinking,
-                    ef=effort,
-                    pm=plan_mode,
+                item = UserItem(
+                    message_id=mid,
+                    content=content,
+                    attachments=attachments,
+                    model=model,
+                    media_passthrough=media_passthrough,
+                    thinking=thinking,
+                    effort=effort,
+                    plan_mode=plan_mode,
+                    active_roles=store.get_active_roles(thread_id),
                     skip_handoff=bound or webhook_app,
-                ):
-                    try:
-                        if ar and not skip_handoff:
-                            await run_handoff_turn(
-                                web_agent, em, store,
-                                content=ct, message_id=m_id, model=md, roles=ar,
-                                is_cancelled=lambda: tid in _cancelled_tasks,
-                                attachments=att, media_passthrough=mp,
-                                thinking=tk, reasoning_effort=ef,
-                                plan_mode=pm,
-                            )
-                        else:
-                            await run_turn(
-                                web_agent, em,
-                                content=ct, message_id=m_id, model=md,
-                                is_cancelled=lambda: tid in _cancelled_tasks,
-                                attachments=att, media_passthrough=mp,
-                                thinking=tk, reasoning_effort=ef,
-                                plan_mode=pm,
-                                group_chat=False,
-                            )
-                    finally:
-                        tasks.pop(tid, None)
-                        _cancelled_tasks.discard(tid)
-                        _thread_active_tasks.pop(th, None)
-                        _thread_runner_tasks.pop(th, None)
-
-                _thread_active_tasks[thread_id] = task_id
-                asyncio.create_task(maybe_title(thread_id, content))
-                tasks[task_id] = asyncio.create_task(runner())
-                _thread_runner_tasks[thread_id] = tasks[task_id]
+                )
+                if held(thread_id) or thread_is_busy(thread_id) or depth(thread_id) > 0:
+                    queued = enqueue(thread_id, item)
+                    await send(_control(
+                        "message_queued",
+                        {
+                            "threadId": thread_id,
+                            "messageId": mid,
+                            "content": content,
+                            "depth": queued,
+                        },
+                        status="queued",
+                    ))
+                    continue
+                _launch_user(web_agent, store, thread_id, item, False, tasks)
 
             elif mtype == "add_role":
                 thread_id = str(data.get("threadId") or "").strip() or store.current_thread()
@@ -869,7 +975,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                         _thread_runner_tasks.pop(th, None)
 
                 _thread_active_tasks[thread_id] = task_id
-                asyncio.create_task(maybe_title(thread_id, new_content))
+                asyncio.create_task(_broadcast_title(store, thread_id, new_content))
                 tasks[task_id] = asyncio.create_task(runner_edit_user())
                 _thread_runner_tasks[thread_id] = tasks[task_id]
 

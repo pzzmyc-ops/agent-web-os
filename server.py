@@ -167,18 +167,24 @@ async def lifespan(app: FastAPI):
     # 等那一轮真的收完尾再跑,避免两轮同时往一个 events.jsonl 里写。
     async def _run_agent_timer(thread_id: str, prompt: str, card: str):
         from apps.nextagent.recall_runner import run_recall
-        from apps.nextagent.ws_chat import interrupt_thread
+        from apps.nextagent.turn_queue import hold, release
+        from apps.nextagent.ws_chat import interrupt_thread, schedule_pump
 
         log = logging.getLogger("mafagent.cron")
+        hold(thread_id)
         try:
-            if await interrupt_thread(thread_id):
-                log.info("定时任务到点,已打断会话 %s 正在跑的回合", thread_id)
-            await run_recall(
-                app.state.web_agent, app.state.store, thread_id,
-                prompt=prompt, card_text=card, source="timer",
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("定时任务回合失败(%s): %s", thread_id, exc)
+            try:
+                if await interrupt_thread(thread_id):
+                    log.info("定时任务到点,已打断会话 %s 正在跑的回合", thread_id)
+                await run_recall(
+                    app.state.web_agent, app.state.store, thread_id,
+                    prompt=prompt, card_text=card, source="timer",
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("定时任务回合失败(%s): %s", thread_id, exc)
+        finally:
+            release(thread_id)
+            schedule_pump(app.state.web_agent, app.state.store, thread_id)
 
     async def _cron_ticker():
         from apps.nextagent.maf_tools.timer_registry import (

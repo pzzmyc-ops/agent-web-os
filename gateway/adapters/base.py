@@ -9,6 +9,10 @@ from gateway.core.types import AdapterResult, Cost, RequestMeta, Usage
 UPSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0)
 
 
+def upstream_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT, headers={"Accept-Encoding": "identity"})
+
+
 class ModelAdapter:
     """对话模型 adapter 契约。
 

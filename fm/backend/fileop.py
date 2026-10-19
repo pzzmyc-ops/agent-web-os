@@ -6,6 +6,7 @@ import stat
 import threading
 import time
 import uuid
+import zipfile
 from typing import List
 
 from fastapi import APIRouter
@@ -149,6 +150,17 @@ def _split_name(name: str):
     return stem, ext
 
 
+def zip_filename(name: str) -> str:
+    text = name.strip()
+    if not text:
+        raise ValueError("name is required")
+    if "/" in text or "\\" in text:
+        raise ValueError("invalid name")
+    if not text.endswith(".zip"):
+        text += ".zip"
+    return text
+
+
 def unique_name(folder: str, name: str, suffix: str = "") -> str:
     stem, ext = _split_name(name)
     if suffix:
@@ -252,7 +264,7 @@ class SpeedCurve:
 
 
 class Job:
-    def __init__(self, op, sources, dest_full, src_label, dest_label, changed):
+    def __init__(self, op, sources, dest_full, src_label, dest_label, changed, zip_path=""):
         self.id = uuid.uuid4().hex
         self.op = op
         self.sources = sources
@@ -288,6 +300,7 @@ class Job:
         self.skipped_files = 0
         self.skipped_bytes = 0
         self.decision_event = threading.Event()
+        self.zip_path = zip_path
         self.thread = threading.Thread(target=self.run, name="fm-fileop-" + self.id[:8], daemon=True)
 
     def start(self) -> None:
@@ -640,6 +653,47 @@ class Job:
             self._finish_file()
         self._remove_source_dirs()
 
+    def _discard_zip(self) -> None:
+        path = self.zip_path
+        if path and os.path.lexists(path):
+            _remove_file(path)
+
+    def _zip_all(self) -> None:
+        target = self.zip_path
+        if not target:
+            raise RuntimeError("zip target is missing")
+        if os.path.lexists(target):
+            raise FileExistsError(os.path.basename(target))
+        try:
+            with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for src, rel, size in self.files:
+                    self.checkpoint()
+                    arc = rel.replace("\\", "/")
+                    _check_rel(arc)
+                    name = os.path.basename(src)
+                    info = zipfile.ZipInfo.from_file(src, arc)
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.flag_bits |= 0x800
+                    self._set_name(name)
+                    written = 0
+                    with open(src, "rb") as src_file:
+                        with zf.open(info, "w") as dest_file:
+                            while True:
+                                self.checkpoint()
+                                buf = src_file.read(CHUNK)
+                                if not buf:
+                                    break
+                                dest_file.write(buf)
+                                written += len(buf)
+                                self._add_bytes(len(buf), name)
+                    if written != size:
+                        with self.lock:
+                            self.total_bytes += written - size
+                    self._finish_file()
+        except Exception:
+            self._discard_zip()
+            raise
+
     def _delete_all(self) -> None:
         for src, _rel, size in self.files:
             self.checkpoint()
@@ -670,7 +724,7 @@ class Job:
         for src, top in self.sources:
             self._scan_one(src, top)
         self.checkpoint()
-        if self.op != "delete":
+        if self.op not in ("delete", "zip"):
             self._detect_conflicts()
         with self.lock:
             self.phase = "run"
@@ -684,6 +738,8 @@ class Job:
             self._copy_all()
         elif self.op == "move":
             self._move_all()
+        elif self.op == "zip":
+            self._zip_all()
         else:
             self._delete_all()
 
@@ -737,7 +793,55 @@ class _Store:
 STORE = _Store()
 
 
-def create_job(op: str, paths: List[str], dest: str = "") -> Job:
+def _create_zip_job(paths: List[str], dest: str, name: str) -> Job:
+    if not paths:
+        raise ValueError("paths is required")
+    if not dest:
+        raise ValueError("dest is required")
+    archive = zip_filename(name)
+    dest_full = resolve(dest)
+    if not os.path.isdir(dest_full):
+        raise NotADirectoryError(dest)
+    target = os.path.join(dest_full, archive)
+    if os.path.lexists(target):
+        raise FileExistsError(archive)
+    sources = []
+    for path in paths:
+        if is_root(path):
+            raise ValueError("cannot zip root")
+        src = resolve(path)
+        if not os.path.exists(src):
+            raise FileNotFoundError(path)
+        sources.append(src)
+    _reject_overlap(sources)
+    entries = []
+    names = []
+    for src in sources:
+        item_name = os.path.basename(src.rstrip("\\/"))
+        if item_name in names:
+            raise FileExistsError(item_name)
+        names.append(item_name)
+        entries.append((src, item_name))
+    parents = []
+    changed = []
+    for path in paths:
+        parent = parent_of(path)
+        if parent not in parents:
+            parents.append(parent)
+            changed.append(parent)
+    dest_norm = normalize(dest)
+    if dest_norm not in changed:
+        changed.append(dest_norm)
+    if len(parents) == 1:
+        src_label = place_label(parents[0])
+    else:
+        src_label = "多个位置"
+    return Job("zip", entries, dest_full, src_label, archive, changed, target)
+
+
+def create_job(op: str, paths: List[str], dest: str = "", name: str = "") -> Job:
+    if op == "zip":
+        return _create_zip_job(paths, dest, name)
     if op not in ("copy", "move", "delete"):
         raise ValueError("invalid op")
     if not paths:
@@ -807,8 +911,8 @@ def create_job(op: str, paths: List[str], dest: str = "") -> Job:
     return Job(op, sources, dest_full, src_label, dest_label, changed)
 
 
-def start_job(op: str, paths: List[str], dest: str = "") -> dict:
-    job = create_job(op, paths, dest)
+def start_job(op: str, paths: List[str], dest: str = "", name: str = "") -> dict:
+    job = create_job(op, paths, dest, name)
     STORE.add(job)
     job.start()
     return job.public()
@@ -818,6 +922,7 @@ class StartBody(BaseModel):
     op: str
     paths: List[str]
     dest: str = ""
+    name: str = ""
 
 
 class IdBody(BaseModel):
@@ -831,7 +936,7 @@ class PolicyBody(BaseModel):
 
 @router.post("/start")
 def start_op(body: StartBody):
-    return ok(start_job(body.op, body.paths, body.dest))
+    return ok(start_job(body.op, body.paths, body.dest, body.name))
 
 
 @router.get("/status")

@@ -29,22 +29,35 @@ function _checkpointStateFrom(res) {
 
 var _historyRenderSeqByThread = {};
 var _historyRequestSeqByThread = {};
-var HISTORY_CHUNK_TURNS = 5;
+var HISTORY_CHUNK_CARDS = 4;
 var HISTORY_SENTINEL_MARGIN_PX = 200;
 var _historyWindowObserver = null;
 
-function _isHistoryTurnStart(ev) {
+function _toolCardCount(ev) {
   var t = String((ev && (ev.type || ev.role)) || "");
-  return t === "user" || t === "agent_recall";
+  if (t !== "assistant") return 0;
+  var calls = ev.toolCalls;
+  if (!Array.isArray(calls)) return 0;
+  return calls.length;
 }
 
 function buildHistoryWindow(events) {
   var turns = [];
+  var weights = [];
   var userOrdinals = new Array(events.length);
   var userCount = 0;
+  var cardCount = 0;
   for (var i = 0; i < events.length; i++) {
     var ev = events[i];
-    if (i === 0 || _isHistoryTurnStart(ev)) turns.push(i);
+    var n = _toolCardCount(ev);
+    if (i === 0) {
+      turns.push(0);
+      weights.push(n);
+    } else if (n > 0) {
+      turns.push(i);
+      weights.push(n);
+    }
+    cardCount += n;
     if (String((ev && (ev.type || ev.role)) || "") === "user") {
       userCount += 1;
       userOrdinals[i] = userCount;
@@ -53,12 +66,25 @@ function buildHistoryWindow(events) {
   return {
     events: events,
     turns: turns,
+    weights: weights,
     userOrdinals: userOrdinals,
     userCount: userCount,
+    cardCount: cardCount,
     renderedTurn: turns.length,
     sentinel: null,
     busy: false,
   };
+}
+
+function _earlierCut(win, endCut) {
+  var acc = 0;
+  var cut = endCut;
+  for (var c = endCut - 1; c >= 0; c--) {
+    cut = c;
+    acc += win.weights[c] || 0;
+    if (acc >= HISTORY_CHUNK_CARDS) break;
+  }
+  return cut;
 }
 
 function _historyScrollEl() {
@@ -120,9 +146,17 @@ function _renderOlderHistoryChunk(cs) {
   var scroll = _historyScrollEl();
   var prevHeight = scroll.scrollHeight;
   var prevTop = scroll.scrollTop;
-  var fromTurn = Math.max(0, win.renderedTurn - HISTORY_CHUNK_TURNS);
+  var fromTurn = _earlierCut(win, win.renderedTurn);
+  if (fromTurn >= win.renderedTurn) {
+    win.busy = false;
+    throw new Error("history window cut did not move");
+  }
   var startIdx = win.turns[fromTurn];
   var endIdx = win.turns[win.renderedTurn];
+  if (!(startIdx < endIdx)) {
+    win.busy = false;
+    throw new Error("history window cut is empty");
+  }
   var wrap = document.createElement("div");
   wrap.className = "history-chunk";
   var anchor = win.sentinel && win.sentinel.parentNode === cs.el ? win.sentinel.nextSibling : cs.el.firstChild;
@@ -634,29 +668,27 @@ function renderHistoryEventsAsync(events, cs) {
   cs.historyWindow = win;
   var st = createHistoryRenderState(cs);
   st.userOrdinals = win.userOrdinals;
-  var startTurn = Math.max(0, win.turns.length - HISTORY_CHUNK_TURNS);
+  var startTurn = win.turns.length ? _earlierCut(win, win.turns.length) : 0;
 
   return new Promise(function (resolve) {
     var index = win.turns.length ? win.turns[startTurn] : 0;
-    function step() {
-      if (seq !== _historyRenderSeqByThread[renderKey]) {
-        resolve(false);
-        return;
-      }
-      if (index >= events.length) {
-        win.renderedTurn = startTurn;
-        area.dataset.userCount = String(win.userCount);
-        _finalizeHistoryRender(st, area);
-        _ensureHistorySentinel(cs);
-        _fillHistoryViewport(cs);
-        resolve(true);
-        return;
-      }
-      _renderHistoryEventGuarded(st, events[index], index, area);
-      index += 1;
-      setTimeout(step, 0);
+    if (seq !== _historyRenderSeqByThread[renderKey]) {
+      resolve(false);
+      return;
     }
-    step();
+    for (; index < events.length; index++) {
+      _renderHistoryEventGuarded(st, events[index], index, area);
+    }
+    if (seq !== _historyRenderSeqByThread[renderKey]) {
+      resolve(false);
+      return;
+    }
+    win.renderedTurn = startTurn;
+    area.dataset.userCount = String(win.userCount);
+    _finalizeHistoryRender(st, area);
+    _ensureHistorySentinel(cs);
+    _fillHistoryViewport(cs);
+    resolve(true);
   });
 }
 

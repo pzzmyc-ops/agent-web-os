@@ -835,10 +835,9 @@ function openExplorer(startPath = "/") {
       }
       if (name === "zip") {
         if (!paths.length) throw new Error("请先选择要压缩的项目");
-        const name = await promptModal("压缩为", "archive.zip");
-        if (!name) return;
-        await API.zip(paths, state.path, name);
-        await FMNotifyFsChanged([state.path]);
+        const archiveName = await promptModal("压缩为", "archive.zip");
+        if (!archiveName) return;
+        await window.FileOp.run("zip", paths, state.path, archiveName);
         return;
       }
       if (name === "unzip") {

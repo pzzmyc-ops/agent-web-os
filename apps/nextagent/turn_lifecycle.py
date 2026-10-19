@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from . import session_log
 from .llm import DSML_RECOVERED_KEY
-from .toolkit import TurnContext, reset_turn, set_turn
+from .toolkit import TurnContext, get_desktop_id, reset_turn, set_turn
 from .tool_tracker import ToolTracker
 from .turn_channels import ClarifyChannel
 from .turn_event_bus import bus as event_bus
@@ -149,7 +149,15 @@ class TurnRun:
             await self.blocks.notice(f"模型以明文输出了 {recovered} 个工具调用(DSML 泄漏),已自动还原执行")
         for c in getattr(update, "contents", None) or []:
             await self.tracker.on_content(c)
-        self.peak_input = max(self.peak_input, usage_input_tokens(update))
+        reported = usage_input_tokens(update)
+        if reported > self.peak_input:
+            self.peak_input = reported
+            self.store.save_ctx_state(self.thread_id, used=self.peak_input)
+            from . import compaction
+            usage = compaction.usage_snapshot(
+                self.store, self.thread_id, self.web_agent.default_window
+            )
+            await self.emitter.turn("context_usage", {"usage": usage})
 
     async def compact_if_due(self, model: str) -> None:
         self.compacted = await maybe_compact(
@@ -166,6 +174,7 @@ class TurnRun:
             clarify=ClarifyChannel(self.tracker, group_chat=self.policy.group_chat),
             store=self.store,
             group_complete=self.policy.group_complete,
+            desktop_id=get_desktop_id(),
             **plan_fields,
         ))
         from .maf_tools.session_key import set_current_session_key

@@ -11,6 +11,7 @@ from ..groupchat.runtime import require_group_chat
 from ..store import APP_FEISHU_WEBHOOK
 from ._context import require_turn
 from ._registry import registry
+from ._spill import fit_messages
 
 LIST_DOC = """查看当前绑定飞书群的消息。默认从现在往前看最近一页。
 
@@ -154,7 +155,7 @@ def feishu_list_messages(
         raise RuntimeError("飞书 webhook 对话不能获取群消息")
     cid = _conversation_id(conversation_id)
     payload = _feishu().list_messages(cid, start, end, page_all)
-    return json.dumps(payload, ensure_ascii=False)
+    return fit_messages(payload)
 
 
 @registry.register(

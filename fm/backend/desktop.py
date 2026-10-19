@@ -156,6 +156,21 @@ def _conn(desktop_id: str) -> DesktopConn:
     return conn
 
 
+def screen_online(desktop_id: str) -> bool:
+    desktop_id = str(desktop_id or "").strip()
+    if not desktop_id:
+        return False
+    return desktop_id in _desktops
+
+
+def exec_on_desktop(desktop_id: str, op: str, params: dict) -> dict:
+    if _loop is None:
+        raise DesktopError("桌面不在线")
+    conn = _conn(desktop_id)
+    fut = asyncio.run_coroutine_threadsafe(conn.call(op, params), _loop)
+    return fut.result()
+
+
 def _online() -> list[dict]:
     return [
         {"desktopId": c.desktop_id, "connectedAt": c.connected_at}

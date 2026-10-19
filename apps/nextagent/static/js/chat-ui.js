@@ -1737,7 +1737,7 @@ export function syncSendButton() {
     return;
   }
   var action = syncComposerForConv(cs);
-  setComposerLocked(action.mode === "compacting");
+  setComposerLocked(false);
   if (action.mode === "compacting") setSendBtnCompacting();
   else if (action.mode === "stop") setSendBtnStop();
   else if (action.mode === "waiting") setSendBtnWaiting();

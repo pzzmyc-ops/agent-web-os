@@ -596,8 +596,8 @@ export function sendPlainText(text) {
   if (_isSending) throw new Error("sendPlainText busy");
   if (_hasUploading()) throw new Error("sendPlainText uploading");
   var cs = activeConv();
-  if (cs && (cs.isStreaming || cs.pendingSend)) {
-    throw new Error("sendPlainText turn active");
+  if (cs && cs.pendingSend) {
+    throw new Error("sendPlainText waiting");
   }
   _isSending = true;
   try {
@@ -641,7 +641,7 @@ export function sendText() {
   var text = input.value.trim();
   var hasAttachments = pendingAttachments.length > 0;
   if (!text && !hasAttachments) return;
-  if (cs && (cs.isStreaming || cs.pendingSend)) {
+  if (cs && cs.pendingSend) {
     return;
   }
 
@@ -735,10 +735,6 @@ export function handleInputKey(e) {
     e.preventDefault();
     if (_isSending || _hasUploading()) return;
     var cs = activeConv();
-    if (cs && cs.isStreaming) {
-      cancelTask(cs.currentTaskId, "main_stop_enter");
-      return;
-    }
     if (cs && cs.pendingSend) return;
     sendText();
   }

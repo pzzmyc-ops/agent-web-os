@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from .api import router as api_router
+from .browser import router as browser_router
 from .desktop import router as desktop_router
 from .fileop import router as fileop_router
 from .terminal import router as terminal_router
@@ -53,6 +54,7 @@ _NO_CACHE_PREFIXES = (
     "/api/transfer",
     "/api/fileop",
     "/api/terminal",
+    "/api/browser",
     "/api/onlyoffice",
 )
 
@@ -84,6 +86,7 @@ def install_fm(app: FastAPI) -> None:
     app.include_router(transfer_router)
     app.include_router(fileop_router)
     app.include_router(terminal_router)
+    app.include_router(browser_router)
     app.mount("/assets/kod", StaticFiles(directory=str(ASSETS_STATIC)), name="fm-kod")
     app.mount("/assets/plugins", StaticFiles(directory=str(ASSETS_PLUGINS)), name="fm-plugins")
 

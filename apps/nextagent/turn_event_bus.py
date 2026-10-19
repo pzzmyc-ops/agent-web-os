@@ -33,6 +33,7 @@ class EventKind(StrEnum):
     BLOCK_PATCH = "block_patch"
     BLOCK_REMOVE = "block_remove"
     TURN_COMPLETE = "turn_complete"
+    CONTEXT_USAGE = "context_usage"
     STREAM_ERROR = "stream_error"
     FS_CHANGED = "fs_changed"
 

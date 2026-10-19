@@ -103,6 +103,13 @@ async def run_turn(
         content=content, message_id=message_id, policy=policy, blocks=blocks,
         is_agent_recall=is_agent_recall,
     ) as run:
+        if run.cancelled_by(is_cancelled):
+            if not skip_user_save:
+                parts, att_list = build_user_contents(
+                    web_agent, content, attachments, media_passthrough=media_passthrough
+                )
+                await _log_user_message(store, emitter, content=content, attachments=att_list)
+            return
         if not (model or "").strip():
             raise RuntimeError("未指定模型")
         model = str(model).strip()
@@ -218,6 +225,8 @@ async def run_handoff_turn(
         web_agent, emitter,
         content=content, message_id=message_id, policy=policy, blocks=blocks,
     ) as run:
+        if run.cancelled_by(is_cancelled):
+            return
         # 组队之前先看上下文有没有到线。这一轮的提问已经落盘了,但它在最末尾,
         # 三等分时必然落在原样保留的尾段里,不会被压掉。
         await run.compact_if_due(model)

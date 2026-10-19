@@ -427,6 +427,20 @@ messageBus.on("tasks_snapshot", function () {
   syncSendButton();
 });
 
+messageBus.on("message_queued", function (msg) {
+  var data = (msg && msg.data) || {};
+  var threadId = data.threadId || "";
+  resolvePendingAck(data.messageId || "");
+  var cs = threadId ? getConvState(threadId) : activeConv();
+  if (!cs) return;
+  if (!cs.queuedEcho) cs.queuedEcho = [];
+  cs.queuedEcho.push(String(data.content || ""));
+  cs.pendingSend = false;
+  cs.outboxFlushing = false;
+  syncComposerForConv(cs, "message_queued");
+  if (!threadId || threadId === state.currentConversationId) syncSendButton();
+});
+
 messageBus.on("message_accepted", function (msg) {
   if (!msg.data) return;
   resolvePendingAck(msg.data.messageId || "");
@@ -739,11 +753,16 @@ messageBus.on("stream_start", function (msg) {
   } else {
     cs.blkTimelineEl = null;
     cs.blkTimelineRow = null;
+    var echoed = false;
+    if (!d.isAgentRecall && cs.queuedEcho && cs.queuedEcho.length && String(cs.queuedEcho[0]) === String(d.content || "")) {
+      cs.queuedEcho.shift();
+      echoed = true;
+    }
     if (cs.pendingSend) {
       cs.pendingSend = false;
     } else if (cs.editingUserMessageIndex) {
       cs.editingUserMessageIndex = null;
-    } else if (d.content) {
+    } else if (!echoed && d.content) {
       if (d.isAgentRecall) {
         renderAgentRecallTrigger(cs, d.content, d.recallSource || "", d.taskId || "");
       } else {

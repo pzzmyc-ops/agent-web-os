@@ -612,12 +612,6 @@ class Store:
             self._touch_thread(thread_id)
             return eid
 
-    def first_user_text(self, thread_id: str) -> str:
-        for e in self.load_events(thread_id):
-            if e.get("type") == session_log.EV_USER:
-                return e.get("content") or ""
-        return ""
-
     def delete_events_after(self, thread_id: str, after_event_id: int) -> int:
         """截掉 id 大于 after_event_id 的事件。编辑重发用它把后续对话砍掉。"""
         with self._lock:

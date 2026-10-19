@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, AsyncIterator
 
-import httpx
-
 from appconfig import load_config
-from gateway.adapters.base import ModelAdapter, UPSTREAM_TIMEOUT
+from gateway.adapters.base import ModelAdapter, upstream_client
 from gateway.core.types import (
     AdapterResult,
     Cost,
@@ -124,7 +122,7 @@ class _OfficialDeepSeek(ModelAdapter):
         headers = self._headers()
         if body.get("stream"):
             async def gen() -> AsyncIterator[bytes]:
-                async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+                async with upstream_client() as client:
                     async with client.stream("POST", _URL, json=payload, headers=headers) as resp:
                         if resp.status_code >= 400:
                             raise UpstreamHttpError(status_code=resp.status_code, body=await resp.aread())
@@ -146,7 +144,7 @@ class _OfficialDeepSeek(ModelAdapter):
             result.stream = gen()
             result.media_type = "text/event-stream"
             return result
-        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
+        async with upstream_client() as client:
             resp = await client.post(_URL, json=payload, headers=headers)
         if resp.status_code >= 400:
             raise UpstreamHttpError(status_code=resp.status_code, body=resp.json())

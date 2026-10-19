@@ -425,7 +425,7 @@ async def _compact_exclusively(request: Request, runner) -> JSONResponse:
     压缩必须独占:摘要那次模型调用要跑几十秒,而压完是用 replace_context_events
     把整个上下文区重写一遍。这期间要是有人发消息起了新回合,新回合刚落盘的事件会被
     这次重写直接抹掉。所以在 ws_chat 那份「谁在占用这个对话」的登记表里占个位 ——
-    发消息的入口查的就是它,会走和回合中一样的拒绝路径。
+    发消息的入口查的就是它。这期间新来的消息只进队列,压缩结束才开始写。
 
     压缩跑在一个单独的 task 里并登记到 _thread_runner_tasks,定时任务到点时
     interrupt_thread 才能真正 cancel 它。取消只会落在摘要那步的 await 上,
@@ -472,6 +472,9 @@ async def _compact_exclusively(request: Request, runner) -> JSONResponse:
             "type": "context_compacting",
             "data": {"threadId": thread_id, "active": False},
         })
+        from .ws_chat import schedule_pump
+
+        schedule_pump(web_agent, store, thread_id)
     if interrupted:
         return JSONResponse({
             "ok": False,

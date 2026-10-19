@@ -19,8 +19,6 @@ export function findChatInflightTask(threadId) {
   return "";
 }
 
-//: 正在压缩上下文的会话。压缩会把整个上下文区重写一遍,这期间发出去的消息会被
-//: 后端以 task_active 拒掉(和回合中同一条路径),所以输入口要一起锁上。
 var _compacting = {};
 
 export function setThreadCompacting(threadId, active) {

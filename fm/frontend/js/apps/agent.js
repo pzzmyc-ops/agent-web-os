@@ -19,7 +19,7 @@ const AgentApp = {
   open(item, id) {
     const frame = document.createElement("iframe");
     frame.className = "agent-frame";
-    frame.src = "/agent";
+    frame.src = "/agent?desktopId=" + encodeURIComponent(DesktopLink.desktopId || "");
     frame.style.cssText = "width:100%;height:100%;border:0;display:block;";
 
     const win = WM.create({

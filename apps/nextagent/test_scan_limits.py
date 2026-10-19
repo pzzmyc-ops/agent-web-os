@@ -126,53 +126,269 @@ class GrepTruncationTests(TempWorkspaceDir):
 
 
 class TerminalTimeoutBackgroundTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.desk = _Desk()
+
+    def _call(self, fn):
+        from apps.nextagent.toolkit._context import TurnContext, bind_turn
+
+        ctx = TurnContext(thread_id="t-scan", task_id="k-scan", desktop_id="desk")
+        with bind_turn(ctx), \
+             mock.patch("fm.backend.terminal.online_desktop_ids", lambda: ["desk"]), \
+             mock.patch("fm.backend.terminal._desktop_online", self.desk.online_fn), \
+             mock.patch("fm.backend.terminal._desktop_call", self.desk.call):
+            return fn()
+
     def test_foreground_timeout_backgrounds_instead_of_killing(self):
-        from apps.nextagent.maf_tools.process_registry import process_registry
-        from apps.nextagent.maf_tools.terminal_tool import terminal_tool
+        from fm.backend.pathutil import IS_WINDOWS
+        from fm.backend.terminal import REGISTRY
+        from apps.nextagent.toolkit.process import process
+        from apps.nextagent.toolkit.terminal import terminal
 
-        raw = terminal_tool(
-            command="echo started; sleep 30",
-            timeout=3,
-            task_id="test_timeout_bg",
-        )
-        result = json.loads(raw)
-        self.addCleanup(process_registry.kill_all, "test_timeout_bg")
+        command = "Write-Output started; Start-Sleep -Seconds 8" if IS_WINDOWS else "echo started; sleep 8"
 
-        self.assertEqual(result["status"], "backgrounded")
+        def run():
+            return json.loads(terminal(command=command, workdir=self.temp.name, timeout=1))
+
+        result = self._call(run)
+        session_id = result["session_id"]
+        self.addCleanup(lambda: REGISTRY.close(session_id) if REGISTRY.has(session_id) else None)
+
+        self.assertEqual(result["status"], "running")
         self.assertIsNone(result["exit_code"])
         self.assertIn("started", result["output"])
-        session_id = result["session_id"]
 
-        polled = process_registry.poll(session_id)
+        def poll():
+            return json.loads(process(action="poll", session_id=session_id))
+
+        polled = self._call(poll)
         self.assertEqual(polled["status"], "running")
         self.assertIn("started", polled["output_preview"])
 
-        killed = process_registry.kill_process(session_id)
-        self.assertEqual(killed["status"], "killed")
-        self.assertEqual(process_registry.poll(session_id)["status"], "exited")
+        def kill():
+            return json.loads(process(action="kill", session_id=session_id))
+
+        killed = self._call(kill)
+        self.assertEqual(killed["status"], "closed")
+        self.assertFalse(REGISTRY.has(session_id))
 
     def test_backgrounded_command_finishes_and_keeps_full_output(self):
-        from apps.nextagent.maf_tools.process_registry import process_registry
-        from apps.nextagent.maf_tools.terminal_tool import terminal_tool
+        from fm.backend.pathutil import IS_WINDOWS
+        from fm.backend.terminal import REGISTRY
+        from apps.nextagent.toolkit.process import process
+        from apps.nextagent.toolkit.terminal import terminal
 
-        raw = terminal_tool(
-            command="echo A; sleep 4; echo B",
-            timeout=2,
-            task_id="test_timeout_finish",
-        )
-        result = json.loads(raw)
-        self.addCleanup(process_registry.kill_all, "test_timeout_finish")
-        self.assertEqual(result["status"], "backgrounded")
+        command = "Write-Output A; Start-Sleep -Seconds 3; Write-Output B" if IS_WINDOWS else "echo A; sleep 3; echo B"
 
+        def run():
+            return json.loads(terminal(command=command, workdir=self.temp.name, timeout=1))
+
+        result = self._call(run)
+        self.assertEqual(result["status"], "running")
         session_id = result["session_id"]
-        waited = process_registry.wait(session_id, timeout=30)
-        self.assertEqual(waited["status"], "exited")
+        self.addCleanup(lambda: REGISTRY.close(session_id) if REGISTRY.has(session_id) else None)
+
+        def wait():
+            return json.loads(process(action="wait", session_id=session_id, timeout=20))
+
+        waited = self._call(wait)
+        self.assertEqual(waited["status"], "idle")
         self.assertEqual(waited["exit_code"], 0)
 
-        log = process_registry.read_log(session_id)["output"]
-        self.assertIn("A", log)
-        self.assertIn("B", log)
-        self.assertNotIn("__HERMES_CWD_", log)
+        def log():
+            return json.loads(process(action="log", session_id=session_id))
+
+        logged = self._call(log)
+        self.assertIn("A", logged["output"])
+        self.assertIn("B", logged["output"])
+
+    def test_turn_without_desktop_id_opens_on_the_online_desktop(self):
+        from fm.backend.terminal import REGISTRY
+        from apps.nextagent.toolkit._context import TurnContext, bind_turn
+        from apps.nextagent.toolkit.terminal import terminal
+
+        ctx = TurnContext(thread_id="t-scan", task_id="k-scan", desktop_id="")
+
+        def run():
+            return json.loads(terminal(command="", workdir=self.temp.name))
+
+        with bind_turn(ctx), \
+             mock.patch("fm.backend.terminal.online_desktop_ids", lambda: ["desk"]), \
+             mock.patch("fm.backend.terminal._desktop_online", self.desk.online_fn), \
+             mock.patch("fm.backend.terminal._desktop_call", self.desk.call):
+            result = run()
+        session_id = result["session_id"]
+        self.addCleanup(lambda: REGISTRY.close(session_id) if REGISTRY.has(session_id) else None)
+        self.assertEqual(result["error"], None)
+        self.assertTrue(session_id)
+        self.assertIn(session_id, self.desk.opened)
+
+
+class TerminalOutputCapTests(unittest.TestCase):
+    size = 300_000
+
+    def setUp(self):
+        import tempfile
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.desk = _Desk()
+
+    def _call(self, fn):
+        from apps.nextagent.toolkit._context import TurnContext, bind_turn
+
+        ctx = TurnContext(thread_id="t-cap", task_id="k-cap", desktop_id="desk")
+        with bind_turn(ctx), \
+             mock.patch("fm.backend.terminal.online_desktop_ids", lambda: ["desk"]), \
+             mock.patch("fm.backend.terminal._desktop_online", self.desk.online_fn), \
+             mock.patch("fm.backend.terminal._desktop_call", self.desk.call):
+            return fn()
+
+    def _assert_capped(self, payload):
+        from apps.nextagent.toolkit.terminal import OUTPUT_HEAD_CHARS, OUTPUT_TAIL_CHARS
+
+        self.assertLessEqual(len(payload["output"]), OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS + 300)
+        self.assertGreater(payload["elided_chars"], 0)
+        saved = Path(payload["output_file"])
+        self.assertTrue(saved.is_file())
+        self.assertIn("y" * self.size, saved.read_text(encoding="utf-8"))
+        self.addCleanup(lambda: saved.unlink(missing_ok=True))
+
+    def test_huge_single_line_is_capped_and_saved(self):
+        from fm.backend.terminal import REGISTRY
+        from apps.nextagent.toolkit.process import process
+        from apps.nextagent.toolkit.terminal import terminal
+
+        command = f"python -c \"print('y'*{self.size})\""
+
+        def run():
+            return json.loads(terminal(command=command, workdir=self.temp.name, timeout=60))
+
+        result = self._call(run)
+        session_id = result["session_id"]
+        self.addCleanup(lambda: REGISTRY.close(session_id) if REGISTRY.has(session_id) else None)
+        self.assertEqual(result["exit_code"], 0)
+        self._assert_capped(result)
+
+        logged = self._call(lambda: json.loads(process(action="log", session_id=session_id)))
+        self._assert_capped(logged)
+
+        killed = self._call(lambda: json.loads(process(action="kill", session_id=session_id)))
+        self.assertEqual(killed["status"], "closed")
+        self._assert_capped(killed)
+
+    def test_short_output_is_untouched(self):
+        from fm.backend.terminal import REGISTRY
+        from apps.nextagent.toolkit.terminal import terminal
+
+        def run():
+            return json.loads(terminal(command="python -c \"print('short')\"", workdir=self.temp.name, timeout=60))
+
+        result = self._call(run)
+        session_id = result["session_id"]
+        self.addCleanup(lambda: REGISTRY.close(session_id) if REGISTRY.has(session_id) else None)
+        self.assertIn("short", result["output"])
+        self.assertNotIn("output_file", result)
+        self.assertNotIn("elided_chars", result)
+
+
+class ReadSliceTests(unittest.TestCase):
+    def test_small_file_is_returned_as_is(self):
+        from apps.nextagent.toolkit._spill import read_slice
+
+        self.assertEqual(read_slice("a\nb\n", "f.txt", None, None), "a\nb\n")
+
+    def test_big_file_without_range_is_refused(self):
+        from apps.nextagent.toolkit._spill import READ_MAX_CHARS, read_slice
+
+        out = read_slice("x" * (READ_MAX_CHARS + 1), "f.txt", None, None)
+        self.assertTrue(out.startswith("Could not read file 'f.txt'"))
+        self.assertIn("offset", out)
+
+    def test_range_returns_only_those_lines(self):
+        from apps.nextagent.toolkit._spill import read_slice
+
+        content = "".join(f"line{i}\n" for i in range(1, 11))
+        out = read_slice(content, "f.txt", 3, 2)
+        self.assertEqual(out, "line3\nline4\n\n[lines 3-4 of 10]")
+
+    def test_huge_single_line_range_is_refused(self):
+        from apps.nextagent.toolkit._spill import READ_MAX_CHARS, read_slice
+
+        out = read_slice("y" * (READ_MAX_CHARS * 3), "f.txt", 1, 1)
+        self.assertTrue(out.startswith("Could not read file"))
+        self.assertIn("grep", out)
+
+    def test_offset_past_end_is_refused(self):
+        from apps.nextagent.toolkit._spill import read_slice
+
+        out = read_slice("a\n", "f.txt", 5, None)
+        self.assertIn("超出范围", out)
+
+
+class FitMessagesTests(unittest.TestCase):
+    def test_small_list_is_unchanged(self):
+        from apps.nextagent.toolkit._spill import fit_messages
+
+        payload = {"conversation_id": "c", "complete": True, "hasMore": False, "messages": [{"text": "hi"}]}
+        self.assertEqual(json.loads(fit_messages(payload)), payload)
+
+    def test_big_list_is_saved_to_file(self):
+        from apps.nextagent.toolkit._spill import OUTPUT_LIMIT_CHARS, fit_messages
+
+        messages = [{"text": "z" * 200} for _ in range(200)]
+        payload = {"conversation_id": "c", "complete": True, "hasMore": False, "messages": messages}
+        out = fit_messages(payload)
+        data = json.loads(out)
+        self.assertLess(len(out), OUTPUT_LIMIT_CHARS + 1000)
+        self.assertEqual(data["message_count"], 200)
+        saved = Path(data["output_file"])
+        self.addCleanup(lambda: saved.unlink(missing_ok=True))
+        self.assertEqual(json.loads(saved.read_text(encoding="utf-8")), payload)
+
+
+class SkillResourceCapTests(unittest.TestCase):
+    def test_big_resource_is_refused_with_path(self):
+        import tempfile
+        from apps.nextagent.hermes_skills import _read_within_skill
+        from apps.nextagent.toolkit._spill import READ_MAX_CHARS
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "big.md").write_text("q" * (READ_MAX_CHARS + 1), encoding="utf-8")
+            (root / "small.md").write_text("ok", encoding="utf-8")
+            self.assertEqual(_read_within_skill(root, "small.md"), "ok")
+            out = _read_within_skill(root, "big.md")
+        self.assertTrue(out.startswith("Error: big.md"))
+        self.assertIn("offset", out)
+
+
+class _Desk:
+    def __init__(self):
+        self.opened = set()
+
+    def online_fn(self, desktop_id):
+        return desktop_id == "desk"
+
+    def call(self, desktop_id, op, params):
+        if desktop_id != "desk":
+            raise RuntimeError(f"桌面 {desktop_id} 不在线")
+        if op == "terminal.open":
+            self.opened.add(params["sessionId"])
+            return {"winId": "terminal:" + params["sessionId"]}
+        if op == "terminal.mark":
+            return {"winId": "terminal:" + params["sessionId"]}
+        if op == "terminal.close":
+            sid = params["sessionId"]
+            if sid not in self.opened:
+                raise RuntimeError("窗口不存在")
+            self.opened.discard(sid)
+            return {"winId": "terminal:" + sid}
+        raise RuntimeError(op)
 
 
 if __name__ == "__main__":

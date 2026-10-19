@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
+import logging
 from typing import Callable
 
 from . import session_log
@@ -90,43 +90,78 @@ async def _wakeup_group(thread_id: str, content: str, task_id: str) -> None:
         unmark_thread_task(thread_id, task_id)
 
 
+def _wakeup_done(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logging.getLogger("mafagent.process").error("完成通知投递失败: %s", exc)
+
+
+def _report_body(evt: dict) -> tuple[str, str]:
+    evt_type = str(evt.get("type") or "completion")
+    thread_id = str(evt.get("session_key") or "").strip()
+    if not thread_id:
+        raise RuntimeError(
+            f"process notification missing session_key type={evt_type} session_id={evt.get('session_id') or ''}"
+        )
+    command = str(evt.get("command") or "").strip()
+    output = str(evt.get("output") or "").strip()
+    if evt_type == "completion":
+        if not command:
+            raise RuntimeError("process notification missing command")
+        body = f"上次运行的命令 {command} 已经完成，退出码 {evt.get('exit_code')}"
+        if output:
+            body = body + "\n" + output
+        return thread_id, body
+    if evt_type == "watch_match":
+        pattern = str(evt.get("pattern") or "").strip()
+        if not command or not pattern:
+            raise RuntimeError("process notification missing watch fields")
+        body = f"后台命令 {command} 的输出出现了 {pattern}"
+        if output:
+            body = body + "\n" + output
+        return thread_id, body
+    if evt_type == "watch_disabled":
+        message = str(evt.get("message") or "").strip()
+        if not message:
+            raise RuntimeError("process notification missing message")
+        return thread_id, message
+    raise RuntimeError(f"process notification unsupported type: {evt_type}")
+
+
 async def dispatch_process_completions(web_agent, store) -> None:
     from .groupchat.runtime import require_group_chat
     from .maf_tools.process_registry import process_registry
-    from .ws_chat import mark_thread_task, register_wakeup_task, thread_is_busy
 
+    mode = require_group_chat()
     evts = process_registry.drain_notifications(skip_poll_observed=False)
     if not evts:
         return
     from fm.backend.desktop import notify_fs_changed
 
-    notify_fs_changed()
-    mode = require_group_chat()
-    by_thread: dict[str, list[dict]] = {}
+    try:
+        notify_fs_changed()
+    except Exception:
+        for evt, _text in evts:
+            process_registry.completion_queue.put(evt)
+        raise
+    from .turn_queue import ReportItem, enqueue
+    from .ws_chat import schedule_pump
+
+    errors: list[str] = []
+    by_thread: dict[str, list[str]] = {}
     for evt, _text in evts:
-        if str(evt.get("type") or "completion") != "completion":
+        try:
+            thread_id, body = _report_body(evt)
+        except RuntimeError as exc:
+            errors.append(str(exc))
             continue
-        thread_id = str(evt.get("session_key") or "")
-        if not thread_id:
-            raise RuntimeError("process notification missing session_key")
-        command = str(evt.get("command") or "").strip()
-        if not command:
-            raise RuntimeError("process notification missing command")
-        by_thread.setdefault(thread_id, []).append(evt)
-    for thread_id, items in by_thread.items():
-        if thread_is_busy(thread_id):
-            for evt in items:
-                process_registry.completion_queue.put(evt)
-            continue
-        lines = [
-            f"上次运行的命令 {str(evt.get('command') or '').strip()} 已经完成"
-            for evt in items
-        ]
-        text = "\n".join(lines)
-        task_id = "proc_" + uuid.uuid4().hex[:12]
-        mark_thread_task(thread_id, task_id)
-        if mode.is_bound_thread(thread_id):
-            task = asyncio.create_task(_wakeup_group(thread_id, text, task_id))
-        else:
-            task = asyncio.create_task(_wakeup_web(web_agent, store, thread_id, text, task_id))
-        register_wakeup_task(task_id, task)
+        by_thread.setdefault(thread_id, []).append(body)
+    for thread_id, bodies in by_thread.items():
+        group_chat = mode.is_bound_thread(thread_id)
+        for body in bodies:
+            enqueue(thread_id, ReportItem(content=body, group_chat=group_chat))
+        schedule_pump(web_agent, store, thread_id)
+    if errors:
+        raise RuntimeError("process notification 无法投递: " + "; ".join(errors))

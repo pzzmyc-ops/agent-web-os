@@ -1347,8 +1347,9 @@ class ProcessRegistry:
           callers). Non-matching addressed events are re-queued.
 
         With neither set, all events are consumed (legacy single-session
-        behavior, backward compatible). Ownerless notifications also retain
-        that legacy behavior even when a filter is provided.
+        behavior, backward compatible). When session_key or owns_event is
+        set, an event with no session_key and no origin_ui_session_id is
+        put back instead of being consumed.
         """
         results: "list[tuple[dict, str]]" = []
         requeue: "list[dict]" = []
@@ -1363,6 +1364,9 @@ class ProcessRegistry:
             evt_session_key = str(evt.get("session_key") or "")
             evt_origin_sid = str(evt.get("origin_ui_session_id") or "")
             requires_positive_proof = bool(evt_session_key or evt_origin_sid)
+            if not requires_positive_proof and (owns_event is not None or session_key):
+                requeue.append(evt)
+                continue
             if owns_event is not None and requires_positive_proof:
                 try:
                     owned = bool(owns_event(evt))

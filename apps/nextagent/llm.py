@@ -35,6 +35,24 @@ class MafChatClient(OpenAIChatCompletionClient):
     ):
         return super()._build_response_stream(_recover_dsml(stream), response_format=response_format)
 
+    def _parse_response_from_openai(self, response, options):
+        missing = getattr(response, "created", None) is None
+        if missing:
+            response = response.model_copy(update={"created": 0})
+        parsed = super()._parse_response_from_openai(response, options)
+        if missing:
+            parsed.created_at = None
+        return parsed
+
+    def _parse_response_update_from_openai(self, chunk):
+        missing = getattr(chunk, "created", None) is None
+        if missing:
+            chunk = chunk.model_copy(update={"created": 0})
+        update = super()._parse_response_update_from_openai(chunk)
+        if missing:
+            update.created_at = None
+        return update
+
     def _prepare_messages_for_openai(
         self,
         chat_messages: Sequence[Message],

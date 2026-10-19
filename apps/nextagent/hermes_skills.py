@@ -22,6 +22,8 @@ from .framework_compat import SKILL_FILE_NAME, Skill, _FileSkillResource
 from .config import configured_gateway_base, load_config
 from .maf_tools._env_passthrough import register_env_passthrough
 from .toolkit._context import current_turn
+from .toolkit._spill import READ_MAX_CHARS
+from fm.backend.pathutil import to_fs
 
 _SKILL_TEMPLATE_RE = re.compile(
     r"\$\{(HERMES_SKILL_DIR|HERMES_SESSION_ID|GATEWAY_BASE|AGENT_PYTHON)\}"
@@ -341,7 +343,13 @@ def _read_within_skill(skill_dir: Path, rel: str) -> str:
     data = full.read_bytes()
     if b"\x00" in data[:2048]:
         return f"Binary file. Absolute path: {full}. Use the terminal tool."
-    return data.decode("utf-8", errors="replace")
+    text = data.decode("utf-8", errors="replace")
+    if len(text) > READ_MAX_CHARS:
+        return (
+            f"Error: {rel_n} 有 {len(text)} 字符，超过一次读取上限 {READ_MAX_CHARS}。"
+            f"绝对路径: {to_fs(str(full))}。用 file_access_read 的 offset 和 limit 分段读，或用 grep 搜。"
+        )
+    return text
 
 
 class HermesFileSkillsSource(FileSkillsSource):

@@ -8,6 +8,7 @@ from fm.backend.pathutil import WORKSPACE, from_agent_path, resolve, to_fs
 from ..groupchat.runtime import require_group_chat
 from ._context import require_turn
 from ._registry import registry
+from ._spill import fit_messages
 
 LIST_DOC = """查看当前绑定钉钉群的消息。默认从现在往前看最近一页。
 
@@ -115,7 +116,7 @@ def dingtalk_list_messages(
 ) -> str:
     cid = _conversation_id(conversation_id)
     payload = _dingtalk().list_messages(cid, start, end, page_all)
-    return json.dumps(payload, ensure_ascii=False)
+    return fit_messages(payload)
 
 
 @registry.register(

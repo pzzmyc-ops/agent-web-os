@@ -23,6 +23,8 @@ from ._context import (
     ClarifyChannel,
     TurnContext,
     bind_turn,
+    get_desktop_id,
+    set_desktop_id,
     current_turn,
     require_turn,
     reset_turn,

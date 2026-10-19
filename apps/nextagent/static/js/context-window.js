@@ -15,6 +15,8 @@ import { syncSendButton } from "./chat-ui.js";
 
 var WIN_ID = "session-context";
 var _boundTid = "";
+var _usageGen = 0;
+var _liveUsage = null;
 
 function fmtTokens(n) {
   n = Number(n) || 0;
@@ -94,6 +96,41 @@ function row(label, value) {
   return '<div class="ctxwin-row"><span>' + label + "</span><b>" + value + "</b></div>";
 }
 
+function setRow(body, label, value) {
+  var rows = body.querySelectorAll(".ctxwin-row");
+  for (var i = 0; i < rows.length; i++) {
+    var span = rows[i].querySelector("span");
+    if (!span || span.textContent !== label) continue;
+    var valueEl = rows[i].querySelector("b");
+    if (!valueEl) throw new Error("context row missing value");
+    valueEl.textContent = value;
+    return;
+  }
+  throw new Error("context row missing: " + label);
+}
+
+function paintUsage(body, usage) {
+  if (
+    usage == null
+    || usage.used == null
+    || usage.context_length == null
+    || usage.usage_percent == null
+    || usage.compression_count == null
+  ) {
+    throw new Error("context_usage incomplete");
+  }
+  var bar = body.querySelector(".ctxwin-bar > i");
+  if (!bar) throw new Error("context usage bar missing");
+  var pct = Number(usage.usage_percent);
+  bar.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  setRow(
+    body,
+    "已用",
+    fmtTokens(usage.used) + " / " + fmtTokens(usage.context_length) + " tokens（" + pct + "%）"
+  );
+  setRow(body, "已压缩次数", String(usage.compression_count));
+}
+
 function renderPanel(body, res) {
   var usage = res.usage;
   var pct = Number(usage.usage_percent) || 0;
@@ -125,10 +162,18 @@ function fillWindow() {
   if (!body) throw new Error("session-context window body missing");
   disarmForce();
   body.innerHTML = '<div class="ctxwin-loading">加载中...</div>';
+  var genAtStart = _usageGen;
   return loadContext(tid).then(function (res) {
     var next = getWindowBody(WIN_ID);
     if (!next) return;
     if (String(_boundTid) !== String(state.currentConversationId)) return;
+    if (
+      _liveUsage
+      && String(_liveUsage.threadId) === String(tid)
+      && _liveUsage.gen !== genAtStart
+    ) {
+      res.usage = _liveUsage.usage;
+    }
     renderPanel(next, res);
   });
 }
@@ -255,8 +300,18 @@ export function initContextWindow() {
   messageBus.on("turn_complete", function () {
     syncContextWindow();
   });
-  // 压缩期间这个对话是独占的:后端在 ws_chat 的占用表里占了位,这时发消息会被
-  // 以 task_active 拒掉。所以输入框和发送按钮一起锁上,别让人白打一段字。
+  messageBus.on("context_usage", function (msg) {
+    var data = (msg && msg.data) || {};
+    if (!data.threadId) throw new Error("context_usage missing threadId");
+    if (!data.usage) throw new Error("context_usage missing usage");
+    _usageGen += 1;
+    _liveUsage = { threadId: data.threadId, usage: data.usage, gen: _usageGen };
+    if (String(data.threadId) !== String(state.currentConversationId)) return;
+    if (!getWindow(WIN_ID)) return;
+    var body = getWindowBody(WIN_ID);
+    if (!body || !body.querySelector(".ctxwin")) return;
+    paintUsage(body, data.usage);
+  });
   messageBus.on("context_compacting", function (msg) {
     var data = (msg && msg.data) || {};
     if (!data.threadId) throw new Error("context_compacting missing threadId");

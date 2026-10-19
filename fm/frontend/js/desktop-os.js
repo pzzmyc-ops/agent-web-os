@@ -322,6 +322,66 @@ const DesktopOS = {
       },
     },
 
+    "terminal.open": {
+      description: "打开一个已经启动的终端会话，不把它拉到前台。",
+      params: {
+        sessionId: { type: "string", required: true, description: "会话号" },
+        path: { type: "string", required: true, description: "终端启动目录" },
+        label: { type: "string", required: false, description: "窗口标题，例如 终端 · 无人 · 空闲" },
+      },
+      async run(p) {
+        const sessionId = String(p.sessionId || "");
+        const path = String(p.path || "");
+        if (!sessionId) throw new Error("terminal.open 需要 sessionId");
+        const resp = await fetch("/api/terminal/active");
+        const body = await resp.text();
+        if (!resp.ok) throw new Error(body);
+        const data = JSON.parse(body);
+        const alive = (data.sessions || []).some((session) => session.id === sessionId);
+        if (!alive) throw new Error("会话已经不在");
+        const label = String(p.label || "");
+        const win = await FMTerminal.attach(sessionId, path, true, true, label);
+        if (!win) throw new Error("终端窗口没有打开");
+        if (label) WM.setTitle(win.id, label);
+        return { winId: win.id };
+      },
+    },
+
+    "terminal.mark": {
+      description: "更新终端窗口上的使用标签，不把窗口拉到前台。",
+      params: {
+        sessionId: { type: "string", required: true, description: "会话号" },
+        label: { type: "string", required: true, description: "标签，例如 终端 · 无人 · 空闲" },
+      },
+      run(p) {
+        const sessionId = String(p.sessionId || "");
+        const label = String(p.label || "");
+        if (!sessionId) throw new Error("terminal.mark 需要 sessionId");
+        if (!label) throw new Error("terminal.mark 需要 label");
+        const id = "terminal:" + sessionId;
+        const win = WM.windows.get(id);
+        if (!win) throw new Error("窗口不存在");
+        WM.setTitle(id, label);
+        return { winId: id };
+      },
+    },
+
+    "terminal.close": {
+      description: "关掉一个终端窗口。",
+      params: {
+        sessionId: { type: "string", required: true, description: "会话号" },
+      },
+      run(p) {
+        const sessionId = String(p.sessionId || "");
+        if (!sessionId) throw new Error("terminal.close 需要 sessionId");
+        const id = "terminal:" + sessionId;
+        const win = WM.windows.get(id);
+        if (!win) throw new Error("窗口不存在");
+        WM.close(id);
+        return { winId: id };
+      },
+    },
+
     "explorer.open": {
       description: "开一个资源管理器窗口并定位到指定目录。",
       params: {

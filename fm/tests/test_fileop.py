@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+import zipfile
 from unittest.mock import patch
 
 from fm.backend.fileop import STORE, SpeedCurve, create_job, same_volume, volume_label
@@ -51,6 +52,55 @@ class FileOpTests(unittest.TestCase):
         self.assertEqual(job.status, "success")
         self.assertEqual(self.read(os.path.join(self.dst, "src", "a.txt")), "hello")
         self.assertFalse(os.path.exists(self.src))
+
+    def test_zip_keeps_sources_and_reports_full_progress(self):
+        self.write(os.path.join(self.src, "中文.txt"), "你好")
+        job = create_job("zip", [self.fs(self.src)], self.fs(self.dst), "pack")
+        job.run()
+        self.assertEqual(job.status, "success", job.error)
+        self.assertEqual(job.public()["percent"], 1)
+        self.assertEqual(job.total_files, 3)
+        self.assertEqual(job.dest_label, "pack.zip")
+        archive = os.path.join(self.dst, "pack.zip")
+        with zipfile.ZipFile(archive) as zf:
+            self.assertEqual(zf.read("src/a.txt"), b"hello")
+            self.assertEqual(zf.read("src/sub/b.txt"), b"world")
+            self.assertEqual(zf.read("src/中文.txt"), "你好".encode("utf-8"))
+        self.assertEqual(self.read(os.path.join(self.src, "a.txt")), "hello")
+
+    def test_zip_cancel_removes_archive(self):
+        job = create_job("zip", [self.fs(self.src)], self.fs(self.dst), "pack.zip")
+        job.cancel = True
+        job.run()
+        self.assertEqual(job.status, "cancelled")
+        self.assertFalse(os.path.exists(os.path.join(self.dst, "pack.zip")))
+        self.assertTrue(os.path.exists(os.path.join(self.src, "a.txt")))
+
+    def test_zip_cancel_during_write_removes_archive(self):
+        path = os.path.join(self.src, "big.bin")
+        with open(path, "wb") as handle:
+            handle.write(os.urandom(4 * 1024 * 1024))
+        job = create_job("zip", [self.fs(path)], self.fs(self.dst), "big.zip")
+        thread = threading.Thread(target=job.run)
+        thread.start()
+        deadline = time.time() + 5
+        while time.time() < deadline and job.done_bytes == 0 and job.status not in ("success", "error", "cancelled"):
+            time.sleep(0.01)
+        job.request_cancel()
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(job.status, "cancelled", job.error)
+        self.assertFalse(os.path.exists(os.path.join(self.dst, "big.zip")))
+
+    def test_zip_rejects_existing_name(self):
+        self.write(os.path.join(self.dst, "pack.zip"), "old")
+        with self.assertRaises(FileExistsError):
+            create_job("zip", [self.fs(self.src)], self.fs(self.dst), "pack.zip")
+        self.assertEqual(self.read(os.path.join(self.dst, "pack.zip")), "old")
+
+    def test_zip_rejects_a_path_in_the_name(self):
+        with self.assertRaises(ValueError):
+            create_job("zip", [self.fs(self.src)], self.fs(self.dst), "sub/pack.zip")
 
     def test_delete_removes_files_then_directories(self):
         job = create_job("delete", [self.fs(self.src)])

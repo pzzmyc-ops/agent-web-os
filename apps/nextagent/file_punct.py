@@ -16,15 +16,27 @@ from .framework_compat import (
     FileStoreEntry,
     _DeleteFileInput,
     _ListInput,
-    _ReadFileInput,
     _matches_glob,
 )
 from .toolkit._context import current_turn
+from .toolkit._spill import READ_MAX_CHARS, read_slice
 
 MOVE_TOOL_NAME = "file_access_move"
 COPY_TOOL_NAME = "file_access_copy"
 MKDIR_TOOL_NAME = "file_access_mkdir"
 RENAME_TOOL_NAME = "file_access_rename"
+
+
+class _ReadInput(BaseModel):
+    file_name: Annotated[str, Field(description="要读的文件路径。")]
+    offset: Annotated[
+        int | None,
+        Field(description="从第几行开始读，1 起。和 limit 一起用来分段读大文件；留空从第一行读。"),
+    ] = None
+    limit: Annotated[
+        int | None,
+        Field(description=f"读多少行。留空读到结尾。不分段时文件超过 {READ_MAX_CHARS} 字符会报错。"),
+    ] = None
 
 
 class _MoveInput(BaseModel):
@@ -249,8 +261,16 @@ class PunctTolerantFileAccessProvider(FileAccessProvider):
         approval = "never_require" if self.disable_readonly_tool_approval else "always_require"
         write_approval = "never_require" if self.disable_write_tool_approval else "always_require"
 
-        @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=approval)
-        async def file_access_read(file_name: str) -> str:
+        @tool(
+            name=FileAccessProvider.READ_TOOL_NAME,
+            schema=_ReadInput,
+            approval_mode=approval,
+            description=(
+                f"读文件。不分段时文件超过 {READ_MAX_CHARS} 字符会报错，"
+                "这时用 offset 和 limit 按行分段读，或用 grep 搜。分段读时结尾会附 [lines 起-止 of 总行数]。"
+            ),
+        )
+        async def file_access_read(file_name: str, offset: int | None = None, limit: int | None = None) -> str:
             try:
                 normalized = from_agent_path(file_name)
                 content = await store.read(normalized)
@@ -260,7 +280,7 @@ class PunctTolerantFileAccessProvider(FileAccessProvider):
                         content = await store.read(alt)
                 if content is None:
                     return f"File '{file_name}' not found."
-                return content
+                return read_slice(content, file_name, offset, limit)
             except ValueError as exc:
                 return f"Could not read file '{file_name}': {exc}"
             except OSError as exc:

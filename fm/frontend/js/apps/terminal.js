@@ -18,7 +18,7 @@ const FMTerminal = {
     if (!resp.ok) throw new Error(body);
     const data = JSON.parse(body);
     if (!data.id) throw new Error("终端没有会话号");
-    return this.attach(data.id, data.path, winId);
+    return this.attach(data.id, data.path);
   },
 
   async reattach(sessionId, folder) {
@@ -28,22 +28,25 @@ const FMTerminal = {
     const data = JSON.parse(body);
     const alive = data.sessions.some((session) => session.id === sessionId);
     if (!alive) throw new Error("终端进程已经不在了");
-    return this.attach(sessionId, folder, "terminal:" + sessionId, true);
+    return this.attach(sessionId, folder, true);
   },
 
-  async attach(sessionId, folder, winId, replay) {
+  async attach(sessionId, folder, replay, quiet, label) {
     await Loader.loadCss("/vendor/xterm/xterm.min.css");
     await Loader.loadJs("/vendor/xterm/xterm.min.js");
     await Loader.loadJs("/vendor/xterm/xterm-addon-fit.min.js");
     if (!window.Terminal || !window.FitAddon) throw new Error("终端组件加载失败");
-    const id = winId || ("terminal:" + sessionId);
+    const id = "terminal:" + sessionId;
     const exist = WM.windows.get(id);
     if (exist) {
-      WM.focus(id);
-      if (exist.minimized) WM.restore(id);
+      if (label) WM.setTitle(id, label);
+      if (!quiet) {
+        WM.focus(id);
+        if (exist.minimized) WM.restore(id);
+      }
       return exist;
     }
-    const name = String(folder).split(/[\\/]/).filter(Boolean).pop() || folder;
+    const name = label || (String(folder).split(/[\\/]/).filter(Boolean).pop() || folder);
     const host = document.createElement("div");
     host.className = "term-host";
     DesktopOS.registerInstance(id, {
@@ -52,12 +55,13 @@ const FMTerminal = {
     });
     const win = WM.create({
       id,
-      title: "终端 - " + name,
+      title: label || ("终端 - " + name),
       icon: this.icon,
       className: "terminal-dialog",
       width: 760,
       height: 480,
       content: host,
+      focus: !quiet,
     });
     const term = new window.Terminal({
       cursorBlink: true,
@@ -70,6 +74,14 @@ const FMTerminal = {
     term.loadAddon(fit);
     term.open(host);
     fit.fit();
+    if (quiet) {
+      const blur = () => {
+        const box = host.querySelector("textarea");
+        if (box) box.blur();
+      };
+      blur();
+      requestAnimationFrame(blur);
+    }
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return true;
       if (event.key !== "c" && event.key !== "C") return true;
@@ -82,6 +94,7 @@ const FMTerminal = {
     const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/terminal/ws?id=" + encodeURIComponent(sessionId));
     let suppressInput = false;
     let first = true;
+    let closed = false;
     term.onData((data) => {
       if (suppressInput) return;
       if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(data));
@@ -104,6 +117,11 @@ const FMTerminal = {
       ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     };
     ws.onclose = (ev) => {
+      if (closed) return;
+      if (ev.code === 1008) {
+        WM.close(win.id);
+        return;
+      }
       term.write("\r\n[连接已关闭 " + ev.code + (ev.reason ? " " + ev.reason : "") + "]\r\n");
     };
     const observer = new ResizeObserver(() => {
@@ -114,6 +132,8 @@ const FMTerminal = {
     });
     observer.observe(host);
     win.onClose = () => {
+      if (closed) return true;
+      closed = true;
       DesktopOS.unregisterInstance(win.id);
       observer.disconnect();
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "close" }));
