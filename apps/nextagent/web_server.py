@@ -28,7 +28,7 @@ from .identity import current_user
 from .store import Store
 from .toolkit import describe_all, registry as tool_registry
 from .turn_event_bus import bus as event_bus
-from .ws_chat import router as ws_router
+from .ws_chat import bind_queue_runtime, router as ws_router
 
 ROOT = Path(__file__).resolve().parent
 
@@ -37,6 +37,7 @@ cfg = load_config()
 store = Store(str(Path(cfg.workspace_dir) / "sessions"))
 store.ensure_default_role(INSTRUCTIONS_BASE)
 web_agent = build_web_agent(cfg, store)
+bind_queue_runtime(web_agent, store)
 # 上次进程是不是死在某个回合中途:有调用没结果的工具在这里补齐说明中断的结果事件。
 # 不补的话下一轮把半边调用发给上游会被判 400,整个会话从此发不出话。
 for _t in store.list_threads():
@@ -476,9 +477,6 @@ async def _compact_exclusively(request: Request, runner) -> JSONResponse:
             "type": "context_compacting",
             "data": {"threadId": thread_id, "active": False},
         })
-        from .ws_chat import schedule_pump
-
-        schedule_pump(web_agent, store, thread_id)
     if interrupted:
         return JSONResponse({
             "ok": False,

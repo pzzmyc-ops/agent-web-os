@@ -95,6 +95,11 @@ async def _flush() -> None:
 
 
 class DispatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from apps.nextagent.ws_chat import bind_queue_runtime
+
+        bind_queue_runtime(None, None)
+
     def tearDown(self) -> None:
         reset("thread-a")
         reset("thread-b")

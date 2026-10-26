@@ -49,7 +49,7 @@ export function renderQueuePanel(cs) {
   panel.innerHTML = "";
   var head = document.createElement("div");
   head.className = "queue-panel-head";
-  head.textContent = "排队中 " + items.length + " 条，当前回合结束后依次发送";
+  head.textContent = "排队中 " + items.length + " 条，当前回合结束后一并发出";
   panel.appendChild(head);
   var list = document.createElement("div");
   list.className = "queue-panel-list";

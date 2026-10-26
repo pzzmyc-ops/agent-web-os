@@ -163,6 +163,6 @@ async def dispatch_process_completions(web_agent, store) -> None:
         for body in bodies:
             enqueue(thread_id, ReportItem(content=body, group_chat=group_chat))
         publish_queue(thread_id)
-        schedule_pump(web_agent, store, thread_id)
+        schedule_pump(thread_id)
     if errors:
         raise RuntimeError("process notification 无法投递: " + "; ".join(errors))

@@ -55,14 +55,38 @@ def enqueue(thread_id: str, item: UserItem | ReportItem) -> int:
     return len(queued)
 
 
-def pop(thread_id: str) -> UserItem | ReportItem | None:
-    queued = _queues.get(thread_id)
+def drain(thread_id: str) -> list[UserItem | ReportItem]:
+    queued = _queues.pop(thread_id, None)
     if not queued:
-        return None
-    item = queued.popleft()
-    if not queued:
-        del _queues[thread_id]
-    return item
+        return []
+    return list(queued)
+
+
+def merge(items: list[UserItem | ReportItem]) -> UserItem | ReportItem:
+    if not items:
+        raise RuntimeError("merge called with empty queue")
+    if len(items) == 1:
+        return items[0]
+    parts = [it.content for it in items if it.content]
+    users = [it for it in items if isinstance(it, UserItem)]
+    if not users:
+        return ReportItem(content="\n\n".join(parts), group_chat=items[-1].group_chat)
+    attachments: list = []
+    for it in users:
+        attachments.extend(it.attachments or [])
+    last = users[-1]
+    return UserItem(
+        message_id=users[0].message_id,
+        content="\n\n".join(parts),
+        attachments=attachments,
+        model=last.model,
+        media_passthrough=last.media_passthrough,
+        thinking=last.thinking,
+        effort=last.effort,
+        plan_mode=last.plan_mode,
+        active_roles=last.active_roles,
+        skip_handoff=last.skip_handoff,
+    )
 
 
 def remove(thread_id: str, item_id: str) -> bool:

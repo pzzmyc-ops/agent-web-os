@@ -53,6 +53,16 @@ _wakeup_tasks: dict[str, asyncio.Task] = {}
 _thread_runner_tasks: dict[str, asyncio.Task] = {}
 
 
+#: 队列启动下一轮时要用的 web_agent / store。回合结束的入口很多(普通发送、编辑重发、
+#: 群聊、终端通知、压缩),不再让每个入口各自记得去推队列:解除忙碌标记这一处统一推。
+_queue_runtime: dict = {}
+
+
+def bind_queue_runtime(web_agent, store) -> None:
+    _queue_runtime["web_agent"] = web_agent
+    _queue_runtime["store"] = store
+
+
 def mark_thread_task(thread_id: str, task_id: str) -> None:
     _thread_active_tasks[thread_id] = task_id
 
@@ -60,6 +70,7 @@ def mark_thread_task(thread_id: str, task_id: str) -> None:
 def unmark_thread_task(thread_id: str, task_id: str) -> None:
     if _thread_active_tasks.get(thread_id) == task_id:
         _thread_active_tasks.pop(thread_id, None)
+        schedule_pump(thread_id)
 
 
 def thread_is_busy(thread_id: str) -> bool:
@@ -193,9 +204,7 @@ async def _plain_assistant_turn(web_agent, store, thread_id: str, message_id: st
         )
         await event_bus.close(task_id)
     finally:
-        if _thread_active_tasks.get(thread_id) == task_id:
-            _thread_active_tasks.pop(thread_id, None)
-        schedule_pump(web_agent, store, thread_id)
+        unmark_thread_task(thread_id, task_id)
 
 
 async def _plain_notice_turn(web_agent, store, thread_id: str, message_id: str, text: str) -> None:
@@ -248,9 +257,7 @@ async def _plain_notice_turn(web_agent, store, thread_id: str, message_id: str, 
         )
         await event_bus.close(task_id)
     finally:
-        if _thread_active_tasks.get(thread_id) == task_id:
-            _thread_active_tasks.pop(thread_id, None)
-        schedule_pump(web_agent, store, thread_id)
+        unmark_thread_task(thread_id, task_id)
 
 
 def _official_deepseek(model: str) -> bool:
@@ -406,8 +413,8 @@ def _cancel_task(tid: str, thread_id: str, local_tasks: dict[str, asyncio.Task])
 _pumping: set[str] = set()
 
 
-def schedule_pump(web_agent, store, thread_id: str) -> None:
-    task = asyncio.create_task(_pump(web_agent, store, thread_id))
+def schedule_pump(thread_id: str) -> None:
+    task = asyncio.create_task(_pump(thread_id))
     task.add_done_callback(_pump_done)
 
 
@@ -421,8 +428,8 @@ def _pump_done(task: asyncio.Task) -> None:
         logging.getLogger("mafagent.ws").error("队列启动失败: %s", exc)
 
 
-async def _pump(web_agent, store, thread_id: str) -> None:
-    from .turn_queue import ReportItem, held, pop
+async def _pump(thread_id: str) -> None:
+    from .turn_queue import ReportItem, drain, held, merge
 
     if held(thread_id) or thread_id in _pumping or thread_is_busy(thread_id):
         return
@@ -430,9 +437,14 @@ async def _pump(web_agent, store, thread_id: str) -> None:
     try:
         if held(thread_id) or thread_is_busy(thread_id):
             return
-        item = pop(thread_id)
-        if item is None:
+        if "web_agent" not in _queue_runtime:
+            raise RuntimeError("队列运行时未绑定,无法启动排队消息")
+        items = drain(thread_id)
+        if not items:
             return
+        web_agent = _queue_runtime["web_agent"]
+        store = _queue_runtime["store"]
+        item = merge(items)
         if isinstance(item, ReportItem):
             _launch_report(web_agent, store, thread_id, item.content, item.group_chat)
         else:
@@ -482,7 +494,6 @@ def _launch_report(
                 await _wakeup_web(web_agent, store, thread_id, content, task_id)
         finally:
             unregister_runner_task(thread_id, asyncio.current_task())
-            schedule_pump(web_agent, store, thread_id)
 
     task = asyncio.create_task(runner())
     task.add_done_callback(_wakeup_done)
@@ -539,7 +550,6 @@ def _launch_user(
             clear_cancelled_task(task_id)
             unregister_runner_task(thread_id, asyncio.current_task())
             unmark_thread_task(thread_id, task_id)
-            schedule_pump(web_agent, store, thread_id)
 
     task = asyncio.create_task(runner())
     register_runner_task(thread_id, task)
@@ -987,14 +997,14 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                             )
                     finally:
                         tasks.pop(tid, None)
-                        _cancelled_tasks.discard(tid)
-                        _thread_active_tasks.pop(th, None)
-                        _thread_runner_tasks.pop(th, None)
+                        clear_cancelled_task(tid)
+                        unregister_runner_task(th, asyncio.current_task())
+                        unmark_thread_task(th, tid)
 
-                _thread_active_tasks[thread_id] = task_id
+                mark_thread_task(thread_id, task_id)
                 asyncio.create_task(_broadcast_title(store, thread_id, new_content))
                 tasks[task_id] = asyncio.create_task(runner_edit_user())
-                _thread_runner_tasks[thread_id] = tasks[task_id]
+                register_runner_task(thread_id, tasks[task_id])
 
             elif mtype in ("checkpoint_restore", "checkpoint_redo"):
                 # 文件检查点:restore 把工作区改回某条消息之前;redo 回到恢复前的头部。
