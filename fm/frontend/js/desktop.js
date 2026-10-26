@@ -1,4 +1,3 @@
-const DESK_POS_KEY = "fm.desktop.iconPos";
 const DESK_KEYS_TYPE = "application/x-fm-desk-keys";
 const DESK_CELL_W = 96;
 const DESK_CELL_H = 100;
@@ -33,12 +32,11 @@ const Desktop = {
   },
 
   loadPositions() {
-    const raw = localStorage.getItem(DESK_POS_KEY);
-    this.positions = raw ? JSON.parse(raw) : {};
+    this.positions = DesktopState.get("iconPos");
   },
 
   savePositions() {
-    localStorage.setItem(DESK_POS_KEY, JSON.stringify(this.positions));
+    DesktopState.set("iconPos", this.positions);
   },
 
   iconEl(key) {

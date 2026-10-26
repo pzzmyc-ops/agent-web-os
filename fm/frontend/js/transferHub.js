@@ -62,10 +62,15 @@ const TransferHub = {
       else if (msg.type === "patch") this.applyPatch(msg.tasks, msg.removed);
     };
     ws.onclose = () => {
+      if (this.ws !== ws) return;
       this.connected = false;
       this.ws = null;
       clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = setTimeout(() => this.connect(), 1500);
+      DesktopLink.sessionAlive().then((alive) => {
+        if (!alive || this.ws) return;
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(() => this.connect(), 1500);
+      });
     };
     ws.onerror = () => {
       ws.close();

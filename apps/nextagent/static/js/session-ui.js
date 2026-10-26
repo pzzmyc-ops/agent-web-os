@@ -13,16 +13,19 @@ export function bindSessionUi(hooks) {
   _hooks = hooks;
 }
 
-export function applySessionUi(ui) {
+export function applySessionUi(ui, opts) {
   if (!_hooks) throw new Error("session ui not bound");
   var data = ui && typeof ui === "object" ? ui : {};
   _applying = true;
   try {
-    _hooks.apply(data);
+    _hooks.apply(data, opts || {});
     var tid = state.currentConversationId;
     if (tid) {
       var cs = getConvState(tid);
-      if (cs) cs.sessionUi = data;
+      if (cs) {
+        cs.sessionUi = data;
+        cs.sessionUiReady = true;
+      }
     }
   } finally {
     _applying = false;
@@ -46,9 +49,10 @@ export function persistSessionUiNow() {
   var tid = state.currentConversationId;
   if (!tid) return Promise.resolve();
   if (!_hooks) throw new Error("session ui not bound");
-  var ui = _hooks.collect();
   var cs = getConvState(tid);
-  if (cs) cs.sessionUi = ui;
+  if (!cs || !cs.sessionUiReady) return Promise.resolve();
+  var ui = _hooks.collect();
+  cs.sessionUi = ui;
   return naFetch(API_BASE + "/api/v1/session-ui", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

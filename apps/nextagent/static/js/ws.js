@@ -2,6 +2,7 @@ import { WS_URL } from "./config.js";
 import { state, convCache, taskMirror, taskLastSeq } from "./state.js";
 import { handleMessage } from "./message-handler.js";
 import { addSystemMsg, refreshAiBubbleCopyState } from "./chat-ui.js";
+import { chatCloseAction, getDesktopId, isDesktopEvicted, sessionAlive } from "./desktop-link.js";
 
 let heartbeatTimer = null;
 var visibilityBound = false;
@@ -10,6 +11,10 @@ var ACK_TIMEOUT_MS = 8000;
 var ACK_MAX_RETRY = 1;
 var pendingAcks = {};
 var outbox = [];
+
+window.addEventListener("na:desktop-evicted", function () {
+  if (state.ws) state.ws.close();
+});
 
 function createMessageId() {
   if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") {
@@ -247,6 +252,7 @@ export function resumeAllInflightTasks() {
 }
 
 export function connect() {
+  if (isDesktopEvicted()) return;
   state.bootstrapping = true;
   state.bootstrapPhase = "auth_pending";
   state.pendingHistorySnapshot = null;
@@ -267,7 +273,7 @@ export function connect() {
       topic: "chat",
       data: {
         threadId: state.currentConversationId || "",
-        desktopId: new URLSearchParams(location.search).get("desktopId") || "",
+        desktopId: getDesktopId(),
       }
     }));
   };
@@ -293,12 +299,25 @@ export function connect() {
   };
 
   state.ws.onclose = function (e) {
-    document.getElementById("statusDot").className = "status-dot disconnected";
-    document.getElementById("statusText").textContent = "\u5df2\u65ad\u5f00";
     stopHeartbeat();
     resetConnectionState();
     state.ws = null;
     failAllPendingAcks("connection_down");
+    var closeAction = chatCloseAction(e.code, isDesktopEvicted());
+    if (closeAction === "stop") return;
+    if (closeAction === "login") {
+      location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
+      return;
+    }
+    sessionAlive().then(function (alive) {
+      if (!alive || isDesktopEvicted()) return;
+      scheduleReconnect();
+    });
+  };
+
+  function scheduleReconnect() {
+    document.getElementById("statusDot").className = "status-dot disconnected";
+    document.getElementById("statusText").textContent = "\u5df2\u65ad\u5f00";
     state.bootstrapping = true;
     state.bootstrapPhase = "auth_pending";
     state.pendingHistorySnapshot = null;

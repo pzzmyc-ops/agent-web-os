@@ -2,7 +2,7 @@
   const ACE_BASE = "/assets/kod/app/vender/ace/src-min-noconflict/";
   const MD_BASE = "/assets/kod/app/vender/markdown/";
   const EXT = [
-    "txt", "md", "json", "xml", "html", "htm", "css", "js", "ts", "py", "java",
+    "txt", "md", "json", "jsonl", "xml", "html", "htm", "css", "js", "ts", "py", "java",
     "c", "cpp", "h", "hpp", "go", "rs", "php", "rb", "sh", "bat", "ps1", "ini",
     "conf", "log", "csv", "yml", "yaml", "toml", "sql", "vue", "jsx", "tsx",
     "gitignore", "env",

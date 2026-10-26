@@ -22,7 +22,7 @@ from .settings import DESKTOP_PATH
 router = APIRouter(prefix="/api")
 
 TEXT_EXT = {
-    ".txt", ".md", ".json", ".xml", ".html", ".htm", ".css", ".js", ".ts",
+    ".txt", ".md", ".json", ".jsonl", ".xml", ".html", ".htm", ".css", ".js", ".ts",
     ".py", ".java", ".c", ".cpp", ".h", ".hpp", ".go", ".rs", ".php", ".rb",
     ".sh", ".bat", ".ps1", ".ini", ".conf", ".log", ".csv", ".yml", ".yaml",
     ".toml", ".sql", ".vue", ".jsx", ".tsx",

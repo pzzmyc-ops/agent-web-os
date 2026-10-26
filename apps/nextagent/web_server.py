@@ -1,7 +1,7 @@
 """mafagent Web 层:REST + WebSocket,作为组件装进宿主 app。
 
 范围:对话列表 + 对话框 + 角色。资产库/媒体/技能/工具不实现(前端对缺失容错)。
-鉴权:自动登录单用户(见 identity.py)。
+鉴权:整站密码门在项目根 webauth.py;身份恒为单用户(见 identity.py)。
 
 不再是独立入口 —— 由 server.py 调用 install_agent(app) 装进文件管理器的
 FastAPI app,单进程运行。路由前缀 /api/v1/*、/api/chat/*、/workspace/*、
@@ -357,7 +357,11 @@ async def session_ui_put(request: Request):
     if not isinstance(ui, dict):
         raise RuntimeError("session-ui must be an object")
     store.save_session_ui(thread_id, ui)
-    return JSONResponse({"ok": True, "sessionUi": store.load_session_ui(thread_id)})
+    saved = store.load_session_ui(thread_id)
+    from .ws_chat import publish_session_ui
+
+    await publish_session_ui(store, thread_id)
+    return JSONResponse({"ok": True, "sessionUi": saved})
 
 
 @router.get("/api/v1/session-memory")

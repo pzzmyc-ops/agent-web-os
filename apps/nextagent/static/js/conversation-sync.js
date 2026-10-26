@@ -65,7 +65,7 @@ export function applyConversationRemoval(deletingIds, res) {
         mod.loadHistory(res.currentId).then(enableAutoFollow);
       });
     } else {
-      applySessionUi(targetCs.sessionUi || {});
+      if (targetCs.sessionUiReady) applySessionUi(targetCs.sessionUi);
       applyPlanDoc(targetCs.planDoc || null);
     }
     syncMemoryWindow();

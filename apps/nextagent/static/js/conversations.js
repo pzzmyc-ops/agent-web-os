@@ -138,7 +138,7 @@ function openConversation(c) {
 
     swapChatArea(c.id);
     var targetCs = getConvState(c.id);
-    applySessionUi(targetCs.sessionUi || {});
+    if (targetCs.sessionUiReady) applySessionUi(targetCs.sessionUi);
     applyPlanDoc(targetCs.planDoc || null);
     syncMemoryWindow();
     syncContextWindow();

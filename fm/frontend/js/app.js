@@ -1,7 +1,5 @@
-//: 存在 sessionStorage 而不是 localStorage:一个标签页就是一块独立的屏幕,窗口存档
-//: 只属于它自己。共用 localStorage 时两个标签页会互相覆盖对方的窗口。代价是关掉标签页
-//: 就不再恢复窗口 —— 屏幕没了,它上面的窗口也就没了。
-const SESSION_KEY = "fm.session.windows";
+//: 窗口存档放在服务器的 desktop_state.json 里(DesktopState),同一时刻只有一块桌面在线,
+//: 新页面顶掉旧页面后从同一份存档恢复窗口。
 const EMBEDDED_APP_DEFS = {
   hermes: HermesApp,
   deepseek: DeepSeekApp,
@@ -58,7 +56,11 @@ const Session = {
       if (ev.op === "window.close" && ev.winId) this.paths.delete(ev.winId);
       if (SESSION_SAVE_OPS.includes(ev.op)) this.save();
     });
-    window.addEventListener("beforeunload", () => this.save());
+    window.addEventListener("beforeunload", () => {
+      if (DesktopLink.evicted) return;
+      this.save();
+      DesktopState.push().catch((err) => console.error("[desktop-state] 退出前保存失败:", err));
+    });
   },
 
   rectOf(win) {
@@ -105,13 +107,13 @@ const Session = {
   },
 
   save() {
-    if (this.restoring) return;
+    if (this.restoring || DesktopLink.evicted) return;
     const list = [];
     DesktopOS.listWindows().forEach((info) => {
       const entry = this.entryOf(info);
       if (entry) list.push(entry);
     });
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(list));
+    DesktopState.set("windows", list);
   },
 
   async reopen(entry) {
@@ -151,9 +153,7 @@ const Session = {
   },
 
   async restore() {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    if (!raw) return;
-    const list = JSON.parse(raw).sort((a, b) => a.z - b.z);
+    const list = DesktopState.get("windows").slice().sort((a, b) => a.z - b.z);
     if (!list.length) return;
     this.restoring = true;
     let activeId = "";
@@ -173,7 +173,27 @@ const Session = {
   },
 };
 
+window.FMDesktopEvicted = function (reason) {
+  document.body.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "desktop-evicted";
+  const title = document.createElement("h1");
+  title.textContent = reason;
+  const hint = document.createElement("p");
+  hint.textContent = "同一时刻只允许一块桌面在线。需要在这里继续用,点下面的按钮,别处那块会被停用。";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "在这里继续使用";
+  btn.addEventListener("click", () => location.reload());
+  box.appendChild(title);
+  box.appendChild(hint);
+  box.appendChild(btn);
+  document.body.appendChild(box);
+};
+
 document.addEventListener("DOMContentLoaded", async () => {
+  DesktopLink.ensureId();
+  await DesktopState.load();
   WM.init();
   // 必须在创建任何窗口/启动任何 app 之前装好打点,否则早期事件会漏。
   DesktopOS.install();

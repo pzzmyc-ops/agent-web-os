@@ -809,6 +809,23 @@ class Store:
     def media_passthrough_on(self, thread_id: str) -> bool:
         return bool(self.load_session_ui(thread_id).get("mediaPassthrough"))
 
+    def turn_settings(self, thread_id: str) -> dict:
+        """一轮对话怎么跑，只看事件文件里的 ui 区，不看前端这次请求带了什么。"""
+        ui = self.load_session_ui(thread_id)
+        raw_thinking = ui.get("thinking")
+        thinking = raw_thinking if isinstance(raw_thinking, bool) else None
+        effort = str(ui.get("reasoningEffort") or "").strip() or None
+        if thinking is not True:
+            effort = None
+        return {
+            "model": self.selected_chat_model(thread_id),
+            "media_passthrough": bool(ui.get("mediaPassthrough")),
+            "thinking": thinking,
+            "effort": effort,
+            "plan_mode": bool(ui.get("planMode")),
+            "agent_speak": ui.get("agentSpeak", True) is not False,
+        }
+
     def selected_chat_model(self, thread_id: str) -> str:
         from .config import resolve_default_chat_model
 

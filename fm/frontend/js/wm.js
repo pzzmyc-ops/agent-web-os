@@ -1,5 +1,3 @@
-const WM_RECT_KEY = "fm.wm.rects";
-
 const WM = {
   z: 100,
   windows: new Map(),
@@ -12,8 +10,23 @@ const WM = {
   init() {
     this.layer = document.getElementById("window-layer");
     this.taskbar = document.getElementById("taskbar-apps");
-    const raw = localStorage.getItem(WM_RECT_KEY);
-    this._rects = raw ? JSON.parse(raw) : {};
+    this._peekApp = "";
+    this._peek = document.createElement("div");
+    this._peek.id = "taskbar-peek";
+    this._peek.className = "task-peek hidden";
+    document.body.appendChild(this._peek);
+    document.addEventListener("pointerdown", (e) => {
+      if (!this._peekApp) return;
+      if (e.target.closest("#taskbar-peek, .task-item, .ctx-menu")) return;
+      this.hidePeek();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this._peekApp) this.hidePeek();
+    });
+    window.addEventListener("resize", () => {
+      if (this._peekApp) this.showPeek(this._peekApp);
+    });
+    this._rects = DesktopState.get("rects");
     this._overlay = document.createElement("div");
     this._overlay.className = "wm-overlay";
     this._overlay.style.cssText =
@@ -73,7 +86,7 @@ const WM = {
       height: parseInt(rect.height, 10),
       maximized: !!win.maximized,
     };
-    localStorage.setItem(WM_RECT_KEY, JSON.stringify(this._rects));
+    DesktopState.set("rects", this._rects);
   },
 
   _recalledRect(id) {
@@ -391,17 +404,110 @@ const WM = {
     this.renderTaskbar();
   },
 
-  showTaskbarMenu(x, y, id) {
+  _groups() {
+    const groups = [];
+    const index = new Map();
+    this.windows.forEach((win) => {
+      const app = DesktopOS._inferApp(win.id);
+      let group = index.get(app);
+      if (!group) {
+        group = { app, wins: [] };
+        index.set(app, group);
+        groups.push(group);
+      }
+      group.wins.push(win);
+    });
+    return groups;
+  },
+
+  _taskLabel(app, wins) {
+    if (wins.length === 1) return wins[0].title;
+    if (app === "explorer") return "我的文件";
+    const spec = kodApp.get(app);
+    if (!spec || !spec.title) throw new Error("任务栏没有这个应用的名字: " + app);
+    return spec.title;
+  },
+
+  _activateTask(win) {
+    if (win.minimized) this.restore(win.id);
+    else if (win.el.classList.contains("active")) this.minimize(win.id);
+    else this.focus(win.id);
+  },
+
+  hidePeek() {
+    this._peekApp = "";
+    this._peek.classList.add("hidden");
+    this._peek.replaceChildren();
+  },
+
+  showPeek(app) {
+    const group = this._groups().find((g) => g.app === app);
+    if (!group || group.wins.length < 2) throw new Error("这个应用没有多个窗口: " + app);
+    let btn = null;
+    this.taskbar.querySelectorAll(".task-item").forEach((el) => {
+      if (el.dataset.app === app) btn = el;
+    });
+    if (!btn) throw new Error("任务栏按钮不存在: " + app);
+    this._peekApp = app;
+    this._peek.replaceChildren();
+    group.wins.forEach((win) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      const active = win.el.classList.contains("active") && !win.minimized;
+      row.className = "task-peek-item" + (active ? " active" : "") + (win.minimized ? " minimized" : "");
+      const ico = document.createElement("span");
+      ico.className = "tico";
+      ico.style.backgroundImage = `url('${win.icon}')`;
+      const label = document.createElement("span");
+      label.className = "tlabel";
+      label.textContent = win.title;
+      row.append(ico, label);
+      row.onclick = () => {
+        this.hidePeek();
+        this.focus(win.id);
+      };
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.showTaskbarMenu(e.clientX, e.clientY, [win]);
+      });
+      this._peek.appendChild(row);
+    });
+    this._peek.classList.remove("hidden");
+    const rect = btn.getBoundingClientRect();
+    const peekRect = this._peek.getBoundingClientRect();
+    let left = rect.left;
+    if (left + peekRect.width > window.innerWidth - 8) left = window.innerWidth - peekRect.width - 8;
+    if (left < 8) left = 8;
+    let top = rect.top - peekRect.height - 8;
+    if (top < 8) top = 8;
+    this._peek.style.left = `${left}px`;
+    this._peek.style.top = `${top}px`;
+  },
+
+  showTaskbarMenu(x, y, wins) {
     const menu = document.getElementById("ctx-menu");
     menu.innerHTML = "";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = "关闭";
-    btn.onclick = () => {
-      menu.classList.add("hidden");
-      this.close(id);
-    };
-    menu.appendChild(btn);
+    wins.forEach((win) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = wins.length === 1 ? "关闭" : ("关闭 " + win.title);
+      btn.onclick = () => {
+        menu.classList.add("hidden");
+        this.close(win.id);
+      };
+      menu.appendChild(btn);
+    });
+    if (wins.length > 1) {
+      const all = document.createElement("button");
+      all.type = "button";
+      all.textContent = "关闭全部窗口";
+      all.onclick = () => {
+        menu.classList.add("hidden");
+        wins.forEach((win) => this.close(win.id));
+      };
+      menu.appendChild(all);
+    }
     menu.classList.remove("hidden");
     const rect = menu.getBoundingClientRect();
     menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 4)}px`;
@@ -409,22 +515,48 @@ const WM = {
   },
 
   renderTaskbar() {
+    const groups = this._groups();
     this.taskbar.innerHTML = "";
-    this.windows.forEach((win) => {
+    groups.forEach((group) => {
+      const { app, wins } = group;
       const item = document.createElement("div");
-      item.className = "task-item" + (win.el.classList.contains("active") && !win.minimized ? " active" : "");
-      item.innerHTML = `<span class="tico" style="background-image:url('${win.icon}')"></span><span>${win.title}</span>`;
+      const active = wins.some((win) => win.el.classList.contains("active") && !win.minimized);
+      item.className = "task-item" + (active ? " active" : "");
+      item.dataset.app = app;
+      const ico = document.createElement("span");
+      ico.className = "tico";
+      ico.style.backgroundImage = `url('${wins[0].icon}')`;
+      const label = document.createElement("span");
+      label.className = "tlabel";
+      label.textContent = this._taskLabel(app, wins);
+      item.append(ico, label);
+      if (wins.length > 1) {
+        const count = document.createElement("span");
+        count.className = "task-count";
+        count.textContent = String(wins.length);
+        item.appendChild(count);
+      }
       item.onclick = () => {
-        if (win.minimized) this.restore(win.id);
-        else if (win.el.classList.contains("active")) this.minimize(win.id);
-        else this.focus(win.id);
+        if (wins.length === 1) {
+          this.hidePeek();
+          this._activateTask(wins[0]);
+          return;
+        }
+        document.getElementById("ctx-menu").classList.add("hidden");
+        if (this._peekApp === app) this.hidePeek();
+        else this.showPeek(app);
       };
       item.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.showTaskbarMenu(e.clientX, e.clientY, win.id);
+        this.hidePeek();
+        this.showTaskbarMenu(e.clientX, e.clientY, wins);
       });
       this.taskbar.appendChild(item);
     });
+    if (!this._peekApp) return;
+    const open = groups.find((g) => g.app === this._peekApp);
+    if (!open || open.wins.length < 2) this.hidePeek();
+    else this.showPeek(this._peekApp);
   },
 };

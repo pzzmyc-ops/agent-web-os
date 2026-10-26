@@ -26,6 +26,10 @@ import { initContextWindow, syncContextWindow } from "./context-window.js";
 import { initRetrievalWindow } from "./retrieval-window.js";
 import { loadHistory, reloadThreadHistory } from "./history.js";
 import { loadConversationList, loadFolderList, loadCurrentConvId, saveCurrentConvId, saveConversationList, saveFolderList } from "./cache.js";
+import { initDesktopLink } from "./desktop-link.js";
+
+initDesktopLink();
+
 const appLayout = document.querySelector(".app-layout");
 const mobileSidebarToggle = document.getElementById("mobileSidebarToggle");
 const sidebarBackdrop = document.getElementById("sidebarBackdrop");
@@ -132,7 +136,7 @@ bindSessionUi({
       attachments: composer.attachments,
     };
   },
-  apply: function (ui) {
+  apply: function (ui, opts) {
     setPlanMode(!!ui.planMode);
     applySessionModelState(ui);
     state.mediaPassthroughEnabled = !!ui.mediaPassthrough;
@@ -140,7 +144,9 @@ bindSessionUi({
     state.agentSpeak = ui.agentSpeak !== false;
     paintAgentSpeakBtn();
     selectSkill(ui.selectedSkill || null);
-    applyComposerSession(ui.composerText || "", ui.attachments || []);
+    if (!opts || !opts.keepComposer) {
+      applyComposerSession(ui.composerText || "", ui.attachments || []);
+    }
   },
 });
 initModelControls();

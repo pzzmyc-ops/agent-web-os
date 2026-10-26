@@ -700,7 +700,7 @@ export function reloadThreadHistory(threadId, reason) {
   var requestSeq = (_historyRequestSeqByThread[targetId] || 0) + 1;
   _historyRequestSeqByThread[targetId] = requestSeq;
   cs.historyLoading = true;
-  var canPersistUi = targetId === state.currentConversationId && cs.sessionUi != null;
+  var canPersistUi = targetId === state.currentConversationId && cs.sessionUiReady;
   var ready = canPersistUi ? persistSessionUiNow() : Promise.resolve();
   return ready.then(function () {
     return naFetch(API_BASE + "/api/v1/history?threadId=" + encodeURIComponent(targetId))

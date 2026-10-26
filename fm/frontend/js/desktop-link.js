@@ -6,6 +6,9 @@ const DesktopLink = {
   ws: null,
   reconnectTimer: 0,
   desktopId: "",
+  evicted: false,
+  ready: null,
+  _readyResolve: null,
 
   init() {
     this.desktopId = this.ensureId();
@@ -18,15 +21,21 @@ const DesktopLink = {
   //: 一个标签页 = 一块屏幕。sessionStorage 正好是这个语义:刷新后还在(窗口也还在,
   //: 所以 winId 继续有效),另开一个标签页则是另一块屏幕、另一个 id。
   ensureId() {
+    if (this.desktopId) return this.desktopId;
+    this.ready = new Promise((resolve) => {
+      this._readyResolve = resolve;
+    });
     let id = sessionStorage.getItem(this.ID_KEY);
     if (!id) {
       id = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
       sessionStorage.setItem(this.ID_KEY, id);
     }
+    this.desktopId = id;
     return id;
   },
 
   connect() {
+    if (this.evicted) return;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -36,18 +45,49 @@ const DesktopLink = {
     );
     this.ws = ws;
     ws.onmessage = (ev) => {
+      if (this.ws !== ws) return;
       const msg = JSON.parse(ev.data);
       if (msg.type === "cmd") this.handle(msg);
       else if (msg.type === "fs_changed") this.fsChanged(msg);
+      else if (msg.type === "evicted") this.onEvicted(msg);
+      else if (msg.type === "ready" && this._readyResolve) this._readyResolve();
     };
     ws.onclose = () => {
+      if (this.ws !== ws) return;
       this.ws = null;
+      if (this.evicted) return;
       clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = setTimeout(() => this.connect(), 1500);
+      this.sessionAlive().then((alive) => {
+        if (!alive || this.evicted || this.ws) return;
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(() => this.connect(), 1500);
+      });
     };
     ws.onerror = () => {
       ws.close();
     };
+  },
+
+  sessionAlive() {
+    return fetch("/api/auth/status", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((body) => {
+        if (!body.ok) throw new Error("登录状态读取失败");
+        if (body.authenticated) return true;
+        location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
+        return false;
+      });
+  },
+
+  onEvicted(msg) {
+    this.evicted = true;
+    clearTimeout(this.reconnectTimer);
+    if (this._readyResolve) {
+      this._readyResolve();
+      this._readyResolve = null;
+    }
+    if (this.ws) this.ws.close();
+    window.FMDesktopEvicted(msg.reason || "桌面已在别处打开");
   },
 
   async handle(msg) {

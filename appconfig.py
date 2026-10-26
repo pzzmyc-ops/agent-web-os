@@ -22,6 +22,7 @@ class Config:
     max_context_window_tokens: int
     max_output_tokens: int
     web_port: int
+    web_password: str
     data_dir: str = "data"
     fm_root: str = ""
     onlyoffice_url: str = ""
@@ -62,6 +63,13 @@ class Config:
         if not d.is_absolute():
             d = _PROJECT_ROOT / d
         return str(d / "workspace")
+
+    @property
+    def desktop_state_path(self) -> str:
+        d = Path(self.data_dir)
+        if not d.is_absolute():
+            d = _PROJECT_ROOT / d
+        return str(d / "desktop_state.json")
 
     @property
     def fm_root_dir(self) -> str:
@@ -146,6 +154,7 @@ def load_config() -> Config:
         max_context_window_tokens=int(pick("max_context_window_tokens", 1048576)),
         max_output_tokens=int(pick("max_output_tokens", 16384)),
         web_port=web_port,
+        web_password=str(need("web_password")),
         data_dir=str(pick("data_dir", "data")),
         fm_root=str(pick("fm_root", "")),
         onlyoffice_url=onlyoffice_url,

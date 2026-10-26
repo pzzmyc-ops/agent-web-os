@@ -156,7 +156,7 @@ const FILE_ICON_MAP = {
   zip: "zip.png", rar: "rar.png", "7z": "7z.png", tar: "tar.png", gz: "gz.png",
   doc: "doc.png", docx: "docx.png", xls: "xls.png", xlsx: "xlsx.png",
   ppt: "ppt.png", pptx: "pptx.png",
-  js: "js.png", ts: "js.png", json: "json.png", css: "css.png", html: "html.png",
+  js: "js.png", ts: "js.png", json: "json.png", jsonl: "json.png", css: "css.png", html: "html.png",
   py: "py.png", java: "java.png", php: "php.png", xml: "xml.png", sql: "sql.png",
   mp3: "music.png", wav: "music.png", flac: "music.png",
   mp4: "movie.png", avi: "movie.png", mkv: "movie.png", mov: "movie.png",

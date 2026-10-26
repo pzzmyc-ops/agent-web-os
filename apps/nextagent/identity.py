@@ -1,7 +1,7 @@
 """单账号身份(自动登录,无密码)。
 
-第二步聚焦对话本身,鉴权走最简:恒为一个固定单用户。前端的登录门(/auth/me)
-恒返回该用户,WS 不校验 token。后续要加单密码门很容易(参照 nextagent 做法)。
+身份恒为一个固定单用户,/auth/me 恒返回该用户。登录门在整站层(项目根 webauth.py):
+密码换 Cookie,所有自有页面、接口和 WebSocket 握手都要带它,这里不再重复校验。
 """
 from __future__ import annotations
 

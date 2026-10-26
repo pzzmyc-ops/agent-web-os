@@ -138,7 +138,8 @@ export function initConv(convId, el) {
     sentBubbles: {},
     acceptedBubbleTasks: {},
     planDoc: null,
-    sessionUi: null
+    sessionUi: null,
+    sessionUiReady: false
   };
   return convCache[convId];
 }

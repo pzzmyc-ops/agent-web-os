@@ -3,6 +3,7 @@ import { syncComposerForConv, findChatInflightTask } from "./composer.js";
 import { resumeAllInflightTasks, requestTaskResume, resolvePendingAck, rejectPendingAck, discardPendingAck, pendingAckRetryCount, flushOutbox, rootMessageId } from "./ws.js";
 import { resolveFileUrl } from "./asset-url.js";
 import { messageBus } from "./message-bus.js";
+import { applySessionUi } from "./session-ui.js";
 import { applyQueueState } from "./queue-panel.js";
 import {
   addSystemMsg,
@@ -536,9 +537,15 @@ messageBus.on("history_snapshot", function (msg) {
       };
     }
     if (msg.data && "planDoc" in msg.data) {
-      // 检查点恢复会把计划槽一起还回去,面板要跟着换
       snapCs.planDoc = msg.data.planDoc || null;
       if (snapThreadId === state.currentConversationId) applyPlanDoc(msg.data.planDoc || null);
+    }
+    if (msg.data && msg.data.sessionUi && typeof msg.data.sessionUi === "object") {
+      if (snapThreadId === state.currentConversationId) applySessionUi(msg.data.sessionUi);
+      else {
+        snapCs.sessionUi = msg.data.sessionUi;
+        snapCs.sessionUiReady = true;
+      }
     }
     if (!snapCs.isStreaming) {
       commitHistoryRender(snapThreadId, snapCs, snapEvents, "history_snapshot");
@@ -550,6 +557,21 @@ messageBus.on("history_snapshot", function (msg) {
   if (state.bootstrapPhase === "history_pending") {
     finishBootstrap();
   }
+});
+
+messageBus.on("session_ui", function (msg) {
+  var data = msg.data || {};
+  var threadId = data.threadId || "";
+  var ui = data.sessionUi;
+  if (!threadId || !ui || typeof ui !== "object") return;
+  var cs = getConvState(threadId);
+  if (threadId === state.currentConversationId) {
+    var input = document.getElementById("msgInput");
+    applySessionUi(ui, { keepComposer: !!(input && document.activeElement === input) });
+    return;
+  }
+  cs.sessionUi = ui;
+  cs.sessionUiReady = true;
 });
 
 messageBus.on("auth_response", function (msg) {

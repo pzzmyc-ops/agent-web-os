@@ -130,20 +130,15 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _thread_model(store, thread_id: str, data: dict) -> str:
-    raw = str(data.get("agentProfile") or data.get("model") or "").strip()
-    if raw:
-        store.apply_selected_chat_model(thread_id, raw)
-    return store.selected_chat_model(thread_id)
+def _stored_turn(store, thread_id: str) -> dict:
+    return store.turn_settings(thread_id)
 
 
-def _reasoning_params(data: dict) -> tuple[bool | None, str | None]:
-    """取前端的思考开关。模型不支持思考时前端两个字段都不发,这里返回 (None, None),
-    表示「不干预」,由模型 adapter 自己的默认值决定。"""
-    raw = data.get("thinking")
-    thinking = bool(raw) if raw is not None else None
-    effort = str(data.get("reasoning_effort") or "").strip() or None
-    return thinking, effort
+async def publish_session_ui(store, thread_id: str) -> None:
+    await broadcast(_control("session_ui", {
+        "threadId": thread_id,
+        "sessionUi": store.load_session_ui(thread_id),
+    }))
 
 
 async def _plain_assistant_turn(web_agent, store, thread_id: str, message_id: str, text: str, *, user_content: str = "") -> None:
@@ -304,6 +299,7 @@ def _history_snapshot(store, thread_id: str, mid: str) -> dict:
             "threadId": thread_id,
             "checkpoints": store.checkpoints.state(thread_id),
             "planDoc": store.load_plan_doc(thread_id),
+            "sessionUi": store.load_session_ui(thread_id),
         },
     }
 
@@ -694,6 +690,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                             from .plan_mode import abandon_plan
 
                             abandon_plan(store, thread_id)
+                            await publish_session_ui(store, thread_id)
 
             elif mtype == "clarify_respond":
                 # 用户回答了 clarify 的提问(点了选项或自己打字)。
@@ -774,7 +771,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     thread_id = store.ensure_initial_thread()
                 from appconfig import load_config
 
-                model = _thread_model(store, thread_id, data)
+                model = store.selected_chat_model(thread_id)
                 keyed = bool(str(load_config().deepseek_api_key or "").strip())
                 global _awaiting_deepseek_key
                 if not keyed and _awaiting_deepseek_key and _official_deepseek(model):
@@ -822,9 +819,12 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                         status="rejected",
                     ))
                     continue
-                media_passthrough = bool(data.get("mediaPassthrough"))
-                thinking, effort = _reasoning_params(data)
-                plan_mode = bool(data.get("planMode"))
+                stored = _stored_turn(store, thread_id)
+                model = stored["model"]
+                media_passthrough = stored["media_passthrough"]
+                thinking = stored["thinking"]
+                effort = stored["effort"]
+                plan_mode = stored["plan_mode"]
                 from .turn_queue import UserItem, depth, enqueue, held
                 from .web_server import dingtalk_bot
 
@@ -932,10 +932,12 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                 store.delete_events_after(thread_id, target_msg["ids"][0])
                 store.update_event_content(thread_id, target_msg["ids"][0], new_content)
 
-                model = _thread_model(store, thread_id, data)
-                media_passthrough = bool(data.get("mediaPassthrough"))
-                thinking, effort = _reasoning_params(data)
-                plan_mode = bool(data.get("planMode"))
+                stored = _stored_turn(store, thread_id)
+                model = stored["model"]
+                media_passthrough = stored["media_passthrough"]
+                thinking = stored["thinking"]
+                effort = stored["effort"]
+                plan_mode = stored["plan_mode"]
                 from .web_server import dingtalk_bot
 
                 bound = dingtalk_bot.is_bound_thread(thread_id)

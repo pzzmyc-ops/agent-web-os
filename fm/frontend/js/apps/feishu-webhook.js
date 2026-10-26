@@ -9,7 +9,7 @@ const FeishuWebhookApp = {
   open(item, id) {
     const frame = document.createElement("iframe");
     frame.className = "agent-frame";
-    frame.src = "/agent?feishu_webhook=1";
+    frame.src = "/agent?feishu_webhook=1&desktopId=" + encodeURIComponent(DesktopLink.desktopId || "");
     frame.style.cssText = "width:100%;height:100%;border:0;display:block;";
     return WM.create({
       id,

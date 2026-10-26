@@ -13,6 +13,7 @@ import { resolveUploadParentPath, resolveChatUploadParentPath, applyNodeFromApi,
 import { previewNodeFromMediaSrc, resolveFileUrl, toWorkspaceReadUrl, workspacePathFromHttpUrl } from "./asset-url.js";
 import { getSendModelParams } from "./model-controls.js";
 import { isPlanModeOn } from "./plan-review.js";
+import { persistSessionUiNow } from "./session-ui.js";
 import { blocksResetTurn, showTurnWaiting, removeTurnWaiting } from "./blocks-renderer.js";
 import { createRestoreBtn, clearCheckpointCursorState } from "./checkpoints.js";
 
@@ -1328,10 +1329,15 @@ export function addUserBubble(content, attachmentsOrArea, targetArea, explicitUs
     }
     msgData.threadId = state.currentConversationId;
     var threadId = msgData.threadId;
-    state.api.sendReliable("edit_and_regenerate", msgData, {
-      onFail: function (reason) {
-        handleRegenerateFailure(threadId, userIdx, msgData, reason);
-      }
+    persistSessionUiNow().then(function () {
+      state.api.sendReliable("edit_and_regenerate", msgData, {
+        onFail: function (reason) {
+          handleRegenerateFailure(threadId, userIdx, msgData, reason);
+        }
+      });
+    }).catch(function (err) {
+      handleRegenerateFailure(threadId, userIdx, msgData, err && err.message ? err.message : String(err));
+      throw err;
     });
     syncSendButton();
   };

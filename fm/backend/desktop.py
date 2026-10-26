@@ -10,23 +10,29 @@
 命令送到指定的那一块、把回执原样返回。桌面能做什么(操作名、参数、是否只读)由浏览器里的
 DesktopOS 自报,后端不留副本 —— 加一个操作只改 DesktopOS,这里零改动。
 
-一个浏览器页面 = 一块桌面 = 一个 desktopId。窗口状态存在那个页面里,所以两个标签页
-物理上就是两块不同的屏幕。id 由页面自己生成并在刷新后保持不变,但刷新会重建窗口,winId
-会变 —— 调用方不能跨刷新记住 winId。命令必须指明打给哪一块,没有「默认那块屏」;指定的
-那块不在线就立刻失败,不排队等它回来。
+一个浏览器页面 = 一块桌面 = 一个 desktopId,但同一时刻只允许一块在线:新页面报到时把
+其余在线页面全部顶掉(发 evicted 后关连接),它自己成为当前桌面。窗口清单、图标位置、
+窗口尺寸存在服务器的 desktop_state.json 里,只有当前桌面能写;新页面从这份清单恢复窗口。
+id 由页面自己生成并在刷新后保持不变,但刷新会重建窗口,winId 会变 —— 调用方不能跨刷新
+记住 winId。命令必须指明打给哪一块;指定的那块不在线就立刻失败,不排队等它回来。
 
-本接口与全站其余接口一样不做鉴权,按局域网内可信部署对待。
+本接口与全站其余自有接口一样由 webauth 的登录门保护。
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+
+from appconfig import load_config
 
 from .pathutil import parent_of, resolve, to_fs
 
@@ -37,10 +43,67 @@ CMD_TIMEOUT = 20.0
 router = APIRouter(prefix="/api/desktop")
 
 _loop: asyncio.AbstractEventLoop | None = None
+_active_id: str = ""
+_slot: asyncio.Lock | None = None
+_slot_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _slot_lock() -> asyncio.Lock:
+    global _slot, _slot_loop
+    loop = asyncio.get_running_loop()
+    if _slot is None or _slot_loop is not loop:
+        _slot = asyncio.Lock()
+        _slot_loop = loop
+    return _slot
+
+STATE_PATH = Path(load_config().desktop_state_path)
+_state_lock = threading.Lock()
 
 
 class RefreshBody(BaseModel):
     paths: list[str] = []
+
+
+class StateBody(BaseModel):
+    desktopId: str
+    state: dict[str, Any]
+
+
+def _load_state() -> dict[str, Any]:
+    if not STATE_PATH.is_file():
+        return {"windows": [], "iconPos": {}, "rects": {}}
+    data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise RuntimeError("桌面状态文件格式不对: " + str(STATE_PATH))
+    return data
+
+
+def _save_state(state: dict[str, Any]) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_PATH.with_name(STATE_PATH.name + "." + uuid.uuid4().hex + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    try:
+        with _state_lock:
+            os.replace(tmp, STATE_PATH)
+    except Exception:
+        tmp.unlink()
+        raise
+
+
+@router.get("/state")
+async def get_state():
+    return {"ok": True, "state": _load_state(), "activeDesktopId": _active_id}
+
+
+@router.put("/state")
+async def put_state(body: StateBody):
+    desktop_id = body.desktopId.strip()
+    if not desktop_id:
+        raise HTTPException(status_code=400, detail="desktopId 不能为空")
+    if desktop_id != _active_id:
+        raise HTTPException(status_code=409, detail="这块桌面已被别处顶掉,不再保存它的状态")
+    _save_state(body.state)
+    return {"ok": True}
 
 
 def _classify_changed(paths: list[str] | None) -> tuple[list[str], list[str]]:
@@ -141,6 +204,14 @@ class DesktopConn:
                 fut.set_exception(DesktopError(reason))
         self._pending.clear()
 
+    async def evict(self, reason: str) -> None:
+        self.fail_all(reason)
+        try:
+            await self.ws.send_json({"type": "evicted", "reason": reason})
+            await self.ws.close(code=4001)
+        except Exception:
+            return
+
 
 _desktops: dict[str, DesktopConn] = {}
 
@@ -226,14 +297,22 @@ async def desktop_screen(websocket: WebSocket, desktopId: str = ""):
         await websocket.close(code=1008)
         return
     await websocket.accept()
-    global _loop
+    global _loop, _active_id
     _loop = asyncio.get_running_loop()
-    previous = _desktops.get(desktop_id)
-    if previous is not None:
-        previous.fail_all(f"桌面 {desktop_id} 重新连接,旧连接上的命令已作废")
-    conn = DesktopConn(desktop_id, websocket)
-    _desktops[desktop_id] = conn
-    await websocket.send_json({"type": "ready", "desktopId": desktop_id})
+    async with _slot_lock():
+        _active_id = desktop_id
+        doomed: list[DesktopConn] = []
+        previous = _desktops.pop(desktop_id, None)
+        if previous is not None:
+            doomed.append(previous)
+        for other_id, other in list(_desktops.items()):
+            _desktops.pop(other_id, None)
+            doomed.append(other)
+        for other in doomed:
+            await other.evict("桌面已在别处打开,这一页已停用")
+        conn = DesktopConn(desktop_id, websocket)
+        _desktops[desktop_id] = conn
+        await websocket.send_json({"type": "ready", "desktopId": desktop_id})
     try:
         while True:
             msg = await websocket.receive_json()

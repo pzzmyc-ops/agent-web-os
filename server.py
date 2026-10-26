@@ -62,6 +62,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fm.backend.mount import install_fm, mount_fm_frontend, start_fm_background
 from gateway.bootstrap import install_gateway
 from apps.nextagent.web_server import install_agent
+from webauth import install_webauth
 import comfyui_adapter
 import deepseek_adapter
 import hermes_adapter
@@ -282,6 +283,7 @@ install_agent(app)
 install_gateway(app)
 install_fm(app)
 _install_embedded(app)
+install_webauth(app, cfg.web_password)
 app.state.list_embedded = _list_embedded
 
 
@@ -312,6 +314,7 @@ mount_fm_frontend(app)
 if __name__ == "__main__":
     port = cfg.web_port
     # 控制台一律用 ASCII —— cmd 默认 cp936,中文会变乱码。
+    print(f"[auth]    login     http://127.0.0.1:{port}/login", flush=True)
     print(f"[fm]      desktop   http://127.0.0.1:{port}/", flush=True)
     print(f"[agent]   chat      http://127.0.0.1:{port}/agent", flush=True)
     print(f"[agent]   webhook   http://127.0.0.1:{port}/feishu-webhook", flush=True)

@@ -11,7 +11,7 @@ import { logAssetUrl } from "./asset-diag.js";
 import { getCurrentPath as getAssetBrowsingPath, resolveUploadParentPath, resolveChatUploadParentPath, applyNodeFromApi, refreshAfterAssetMutation } from "./modules/asset-system/asset-store.js";
 import { closeEffortDropdown, getSendModelParams, getModelDropdownProfiles, selectAgentProfile } from "./model-controls.js";
 import { abandonPlan, isPlanModeOn } from "./plan-review.js";
-import { persistSessionUi } from "./session-ui.js";
+import { persistSessionUi, persistSessionUiNow } from "./session-ui.js";
 import { discardRevertedRows } from "./checkpoints.js";
 
 export var NEXTAGENT_ASSET_REFS_DRAG_TYPE = "application/x-nextagent-asset-refs";
@@ -642,15 +642,24 @@ export function sendPlainText(text) {
       syncSendButton();
     }
     var sendThreadId = msgData.threadId;
-    var wsId = sendReliable("text", msgData, {
-      onFail: function (reason) {
-        handleTextSendFailure(sendThreadId, bubbleRow, msgData, reason);
-      }
+    persistSessionUiNow().then(function () {
+      var wsId = sendReliable("text", msgData, {
+        onFail: function (reason) {
+          handleTextSendFailure(sendThreadId, bubbleRow, msgData, reason);
+        }
+      });
+      _rememberSentBubble(cs, wsId, bubbleRow);
+    }).catch(function (err) {
+      handleTextSendFailure(sendThreadId, bubbleRow, msgData, err && err.message ? err.message : String(err));
+      throw err;
+    }).finally(function () {
+      _isSending = false;
+      _syncSendBtn();
     });
-    _rememberSentBubble(cs, wsId, bubbleRow);
-  } finally {
+  } catch (err) {
     _isSending = false;
     _syncSendBtn();
+    throw err;
   }
 }
 
@@ -746,15 +755,24 @@ export function sendText() {
   }
 
   var sendThreadId = msgData.threadId;
-  var wsId = sendReliable("text", msgData, {
-    onFail: function (reason) {
-      handleTextSendFailure(sendThreadId, bubbleRow, msgData, reason);
-    }
-  });
-  _rememberSentBubble(cs, wsId, bubbleRow);
-  } finally {
+  persistSessionUiNow().then(function () {
+    var wsId = sendReliable("text", msgData, {
+      onFail: function (reason) {
+        handleTextSendFailure(sendThreadId, bubbleRow, msgData, reason);
+      }
+    });
+    _rememberSentBubble(cs, wsId, bubbleRow);
+  }).catch(function (err) {
+    handleTextSendFailure(sendThreadId, bubbleRow, msgData, err && err.message ? err.message : String(err));
+    throw err;
+  }).finally(function () {
     _isSending = false;
     _syncSendBtn();
+  });
+  } catch (err) {
+    _isSending = false;
+    _syncSendBtn();
+    throw err;
   }
 }
 
