@@ -70,7 +70,10 @@ class QueueStateTest(unittest.TestCase):
                 await ws_chat._pump("thread-q")
                 await asyncio.sleep(0)
             self.assertEqual(len(launched), 1)
-            self.assertEqual(launched[0].content, "先发\n\n命令跑完了\n\n后发")
+            self.assertEqual(
+                launched[0].content,
+                "先发\n\n" + turn_queue.REPORT_PREFACE + "\n\n命令跑完了\n\n后发",
+            )
             self.assertEqual(launched[0].message_id, "m1")
             self.assertEqual(len(launched[0].attachments), 2)
             self.assertEqual(turn_queue.depth("thread-q"), 0)
@@ -97,10 +100,68 @@ class QueueStateTest(unittest.TestCase):
             ), mock.patch.object(ws_chat, "thread_is_busy", return_value=False):
                 await ws_chat._pump("thread-q")
                 await asyncio.sleep(0)
-            self.assertEqual(launched, [("第一条完成\n\n第二条完成", False)])
+            self.assertEqual(launched, [(turn_queue.REPORT_PREFACE + "\n\n第一条完成\n\n第二条完成", False)])
             self.assertEqual(turn_queue.depth("thread-q"), 0)
 
         asyncio.run(run())
+
+    def test_pump_drops_reports_already_seen(self) -> None:
+        launched = []
+
+        def fake_launch_report(web_agent, store, thread_id, content, group_chat):
+            launched.append(content)
+
+        def fake_launch_user(web_agent, store, thread_id, item, local_tasks):
+            launched.append(item.content)
+
+        async def fake_broadcast(obj):
+            return None
+
+        async def run() -> None:
+            enqueue("thread-q", ReportItem(content="已看过", group_chat=False, session_id="s1", command_seq=1, completion=True))
+            enqueue("thread-q", ReportItem(content="没看过", group_chat=False, session_id="s2", command_seq=1, completion=True))
+            with mock.patch.object(ws_chat, "broadcast", fake_broadcast), mock.patch.object(
+                ws_chat, "_launch_report", fake_launch_report
+            ), mock.patch.object(
+                ws_chat, "_launch_user", fake_launch_user
+            ), mock.patch.object(ws_chat, "thread_is_busy", return_value=False), mock.patch(
+                "apps.nextagent.message_runner.report_is_stale",
+                side_effect=lambda it: it.session_id == "s1",
+            ):
+                await ws_chat._pump("thread-q")
+                await asyncio.sleep(0)
+            self.assertEqual(launched, [turn_queue.REPORT_PREFACE + "\n\n没看过"])
+
+        asyncio.run(run())
+
+    def test_pump_with_only_seen_reports_launches_nothing(self) -> None:
+        launched = []
+
+        async def fake_broadcast(obj):
+            return None
+
+        async def run() -> None:
+            enqueue("thread-q", ReportItem(content="已看过", group_chat=False, session_id="s1", command_seq=1, completion=True))
+            with mock.patch.object(ws_chat, "broadcast", fake_broadcast), mock.patch.object(
+                ws_chat, "_launch_report", lambda *a: launched.append(a)
+            ), mock.patch.object(ws_chat, "thread_is_busy", return_value=False), mock.patch(
+                "apps.nextagent.message_runner.report_is_stale",
+                return_value=True,
+            ):
+                await ws_chat._pump("thread-q")
+                await asyncio.sleep(0)
+            self.assertEqual(launched, [])
+            self.assertEqual(turn_queue.depth("thread-q"), 0)
+
+        asyncio.run(run())
+
+    def test_single_user_item_is_passed_through_unchanged(self) -> None:
+        item = _user("m1", "单条")
+        self.assertIs(turn_queue.merge([item]), item)
+        report = ReportItem(content="单条通知", group_chat=True)
+        merged = turn_queue.merge([report])
+        self.assertEqual(merged.content, turn_queue.REPORT_PREFACE + "\n\n单条通知")
+        self.assertTrue(merged.group_chat)
 
     def test_unmark_thread_task_pumps_the_queue(self) -> None:
         launched = []

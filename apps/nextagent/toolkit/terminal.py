@@ -60,6 +60,9 @@ command 留空：只改牌子，或只打开窗口，不打命令。
 background 为 false：打完这一行后等到它结束再返回。到点还没结束就不杀，窗口留着，status 为 running，之后用 process 接着看。
 background 为 true：打完立刻返回 session_id，窗口留着继续跑。
 
+优先用前台等结果，timeout 设得比预计运行时间长一些。放后台的命令，结果要你自己用 process(action='wait') 或 process(action='poll') 去看。
+notify_on_complete 一般不要设。只有预计要跑很久、你打算先结束这一轮去做别的事、之后需要被叫回来的任务才设。设了之后命令结束时只会收到一句简短通知，不含输出；你已经自己看过结果的，不会再通知。
+
 人在同一个窗口里打的字会和你交错。这是同一条终端。
 
 process 工具用来看、等、往正在跑的程序里写、关掉：
@@ -171,7 +174,7 @@ def terminal(
         workdir: 新终端的目录。留空表示工作区。已有终端上不能传。
         timeout: 前台等待的秒数。留空为 180。到点不杀进程。
         background: True 表示打完就返回，窗口继续跑。
-        notify_on_complete: 后台命令结束时通知你。不要和 watch_patterns 同时设。
+        notify_on_complete: 后台命令结束时叫你一声。一般不要设，结果自己用 process 看；只给要跑很久、你打算先结束这一轮的任务。不要和 watch_patterns 同时设。
         watch_patterns: 后台输出里出现这些字时通知你。同一终端至少隔 15 秒。
         pty: 必须为 True。这个终端始终是系统终端。
         mark: 有人、无人，或留空。只有任务完成才填无人。

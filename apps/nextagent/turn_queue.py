@@ -25,8 +25,26 @@ class UserItem:
 class ReportItem:
     content: str
     group_chat: bool
+    session_id: str = ""
+    command_seq: int = 0
+    completion: bool = False
     item_id: str = ""
     queued_at: int = 0
+
+
+REPORT_PREFACE = "以下是后台终端的通知。如果你已经知道了，忽略它，不要重复之前的回答。"
+
+
+def _joined_text(items: list) -> str:
+    parts: list[str] = []
+    prefaced = False
+    for it in items:
+        if isinstance(it, ReportItem) and not prefaced:
+            parts.append(REPORT_PREFACE)
+            prefaced = True
+        if it.content:
+            parts.append(it.content)
+    return "\n\n".join(parts)
 
 
 _queues: dict[str, deque] = {}
@@ -65,19 +83,19 @@ def drain(thread_id: str) -> list[UserItem | ReportItem]:
 def merge(items: list[UserItem | ReportItem]) -> UserItem | ReportItem:
     if not items:
         raise RuntimeError("merge called with empty queue")
-    if len(items) == 1:
-        return items[0]
-    parts = [it.content for it in items if it.content]
     users = [it for it in items if isinstance(it, UserItem)]
+    if len(items) == 1 and users:
+        return items[0]
+    text = _joined_text(items)
     if not users:
-        return ReportItem(content="\n\n".join(parts), group_chat=items[-1].group_chat)
+        return ReportItem(content=text, group_chat=items[-1].group_chat)
     attachments: list = []
     for it in users:
         attachments.extend(it.attachments or [])
     last = users[-1]
     return UserItem(
         message_id=users[0].message_id,
-        content="\n\n".join(parts),
+        content=text,
         attachments=attachments,
         model=last.model,
         media_passthrough=last.media_passthrough,

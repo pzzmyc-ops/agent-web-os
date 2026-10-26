@@ -234,6 +234,7 @@ class HostedSession:
         self.exit_code = None
         self.command = ""
         self.command_start = 0
+        self.command_seq = 0
         self.notify_on_complete = False
         self.watch_patterns = []
         self.started_at = time.time()
@@ -303,6 +304,7 @@ class HostedSession:
             "session_id": self.id,
             "session_key": self._command_session_key,
             "command": self.command,
+            "command_seq": self.command_seq,
             "pattern": matched,
             "output": line[:2000],
             "suppressed": 0,
@@ -331,16 +333,15 @@ class HostedSession:
             self.cond.notify_all()
             if self.notify_on_complete and not self._notified:
                 self._notified = True
-                output, _code = self._command_view()
                 notice = {
                     "type": "completion",
                     "session_id": self.id,
                     "session_key": self._command_session_key,
                     "command": self.command,
+                    "command_seq": self.command_seq,
                     "exit_code": self.exit_code,
                     "completion_reason": "exited",
                     "termination_source": "",
-                    "output": output[-2000:],
                     "started_at": self.started_at,
                 }
         if notice is not None:
@@ -405,6 +406,7 @@ class HostedSession:
                 raise RuntimeError(f"会话现在是 {self.state}，不能提交新命令")
             self.command = line
             self.command_start = len(self.text)
+            self.command_seq += 1
             self.exit_code = None
             self.notify_on_complete = bool(notify)
             self.watch_patterns = list(patterns or [])
@@ -432,6 +434,17 @@ class HostedSession:
     def command_view(self) -> tuple[str, int | None]:
         with self.lock:
             return self._command_view()
+
+    def mark_result_seen(self) -> None:
+        with self.lock:
+            if self.state == "idle" and self.result_ready:
+                self.result_taken = True
+
+    def report_is_stale(self, command_seq: int, *, completion: bool) -> bool:
+        with self.lock:
+            if command_seq != self.command_seq:
+                return True
+            return completion and self.result_taken
 
     def _command_view(self) -> tuple[str, int | None]:
         suffix = self.text[self.command_start:]

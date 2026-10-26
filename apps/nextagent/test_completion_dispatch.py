@@ -66,6 +66,7 @@ def _bare_session() -> HostedSession:
     session.text = "echo hi\nhi\n"
     session.command = ""
     session.command_start = 0
+    session.command_seq = 0
     session.exit_code = None
     session.notify_on_complete = False
     session.watch_patterns = []
@@ -114,7 +115,49 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(len(delivered), 1)
         self.assertEqual(delivered[0]["session_key"], "thread-a")
         self.assertEqual(delivered[0]["command"], "echo hi")
-        self.assertIn("hi", delivered[0]["output"])
+        self.assertEqual(delivered[0]["command_seq"], 1)
+        self.assertNotIn("output", delivered[0])
+
+    def test_wait_or_poll_makes_completion_stale(self) -> None:
+        session = _bare_session()
+        session._deliver = lambda _n: None
+        session.submit_line("echo hi", notify=True, session_key="thread-a")
+        session.text += "hi\n"
+        session._latched_exit = 0
+        session._settle(session._settle_gen)
+        self.assertFalse(session.report_is_stale(1, completion=True))
+        session.mark_result_seen()
+        self.assertTrue(session.report_is_stale(1, completion=True))
+        self.assertFalse(session.report_is_stale(1, completion=False))
+        self.assertTrue(session.report_is_stale(0, completion=False))
+
+    def test_stale_report_is_not_queued(self) -> None:
+        session = _bare_session()
+        session._deliver = lambda _n: None
+        session.submit_line("echo hi", notify=True, session_key="thread-a")
+        session.text += "hi\n"
+        session._latched_exit = 0
+        session._settle(session._settle_gen)
+        session.mark_result_seen()
+
+        async def run() -> None:
+            with isolated_queue(), mock.patch(
+                "apps.nextagent.groupchat.runtime.require_group_chat",
+                return_value=Mode(),
+            ), mock.patch(
+                "fm.backend.terminal.REGISTRY.get",
+                return_value=session,
+            ), mock.patch(
+                "fm.backend.desktop.notify_fs_changed",
+            ):
+                evt = _completion("sid", "thread-a", "echo hi", "")
+                evt["command_seq"] = 1
+                process_registry.completion_queue.put(evt)
+                await dispatch_process_completions(None, None)
+                await _flush()
+                self.assertEqual(depth("thread-a"), 0)
+
+        asyncio.run(run())
 
     def test_watch_notice_uses_command_chat(self) -> None:
         session = _bare_session()
@@ -172,7 +215,9 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0][0], "thread-a")
         self.assertIn("echo good", seen[0][1])
-        self.assertIn("good-out", seen[0][1])
+        self.assertIn("s-a", seen[0][1])
+        self.assertNotIn("good-out", seen[0][1])
+        self.assertTrue(seen[0][1].startswith("以下是后台终端的通知"))
 
     def test_watch_notice_is_delivered(self) -> None:
         seen = []

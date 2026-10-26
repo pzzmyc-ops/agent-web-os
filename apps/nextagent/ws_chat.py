@@ -442,6 +442,12 @@ async def _pump(thread_id: str) -> None:
         items = drain(thread_id)
         if not items:
             return
+        from .message_runner import report_is_stale
+
+        items = [it for it in items if not (isinstance(it, ReportItem) and report_is_stale(it))]
+        if not items:
+            publish_queue(thread_id)
+            return
         web_agent = _queue_runtime["web_agent"]
         store = _queue_runtime["store"]
         item = merge(items)

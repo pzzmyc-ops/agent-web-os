@@ -86,6 +86,9 @@ def process(
                 return json.dumps({"status": "not_found", "error": f"No process with ID {session_id}"}, ensure_ascii=False)
         return json.dumps({"status": "not_found", "error": f"No process with ID {session_id}"}, ensure_ascii=False)
 
+    if action in {"poll", "log"}:
+        session.mark_result_seen()
+
     if action == "poll":
         visible = session.visible_text()
         result = {

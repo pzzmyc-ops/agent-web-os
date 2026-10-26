@@ -101,24 +101,24 @@ def _wakeup_done(task: asyncio.Task) -> None:
 def _report_body(evt: dict) -> tuple[str, str]:
     evt_type = str(evt.get("type") or "completion")
     thread_id = str(evt.get("session_key") or "").strip()
+    session_id = str(evt.get("session_id") or "").strip()
     if not thread_id:
         raise RuntimeError(
-            f"process notification missing session_key type={evt_type} session_id={evt.get('session_id') or ''}"
+            f"process notification missing session_key type={evt_type} session_id={session_id}"
         )
     command = str(evt.get("command") or "").strip()
     output = str(evt.get("output") or "").strip()
     if evt_type == "completion":
         if not command:
             raise RuntimeError("process notification missing command")
-        body = f"上次运行的命令 {command} 已经完成，退出码 {evt.get('exit_code')}"
-        if output:
-            body = body + "\n" + output
+        body = f"终端 {session_id} 的后台命令已经结束，退出码 {evt.get('exit_code')}：{command}"
+        body = body + f"\n要看输出用 process(action='log', session_id='{session_id}')。"
         return thread_id, body
     if evt_type == "watch_match":
         pattern = str(evt.get("pattern") or "").strip()
         if not command or not pattern:
             raise RuntimeError("process notification missing watch fields")
-        body = f"后台命令 {command} 的输出出现了 {pattern}"
+        body = f"终端 {session_id} 的后台命令 {command} 的输出出现了 {pattern}"
         if output:
             body = body + "\n" + output
         return thread_id, body
@@ -128,6 +128,18 @@ def _report_body(evt: dict) -> tuple[str, str]:
             raise RuntimeError("process notification missing message")
         return thread_id, message
     raise RuntimeError(f"process notification unsupported type: {evt_type}")
+
+
+def report_is_stale(item) -> bool:
+    if not item.session_id:
+        return False
+    from fm.backend.terminal import REGISTRY
+
+    try:
+        session = REGISTRY.get(item.session_id)
+    except KeyError:
+        return False
+    return session.report_is_stale(int(item.command_seq or 0), completion=bool(item.completion))
 
 
 async def dispatch_process_completions(web_agent, store) -> None:
@@ -150,18 +162,26 @@ async def dispatch_process_completions(web_agent, store) -> None:
     from .ws_chat import publish_queue, schedule_pump
 
     errors: list[str] = []
-    by_thread: dict[str, list[str]] = {}
+    by_thread: dict[str, list[ReportItem]] = {}
     for evt, _text in evts:
         try:
             thread_id, body = _report_body(evt)
         except RuntimeError as exc:
             errors.append(str(exc))
             continue
-        by_thread.setdefault(thread_id, []).append(body)
-    for thread_id, bodies in by_thread.items():
-        group_chat = mode.is_bound_thread(thread_id)
-        for body in bodies:
-            enqueue(thread_id, ReportItem(content=body, group_chat=group_chat))
+        item = ReportItem(
+            content=body,
+            group_chat=mode.is_bound_thread(thread_id),
+            session_id=str(evt.get("session_id") or "").strip(),
+            command_seq=int(evt.get("command_seq") or 0),
+            completion=str(evt.get("type") or "completion") == "completion",
+        )
+        by_thread.setdefault(thread_id, []).append(item)
+    for thread_id, items in by_thread.items():
+        for item in items:
+            if report_is_stale(item):
+                continue
+            enqueue(thread_id, item)
         publish_queue(thread_id)
         schedule_pump(thread_id)
     if errors:
