@@ -10,24 +10,29 @@ from fm.backend.settings import ROOT
 OUTPUT_LIMIT_CHARS = 10_000
 OUTPUT_HEAD_CHARS = 5_000
 OUTPUT_TAIL_CHARS = 5_000
+RENDERED_PAYLOAD_LIMIT_CHARS = OUTPUT_LIMIT_CHARS * 3
 OUTPUT_DIR_NAME = "agent-tools"
 READ_MAX_CHARS = 100_000
 
 
-def spill_text(text: str) -> dict | None:
-    if len(text) <= OUTPUT_LIMIT_CHARS:
+def spill_text(text: str, limit: int = OUTPUT_LIMIT_CHARS) -> dict | None:
+    if limit < 2:
+        raise ValueError(f"spill limit 至少为 2，收到 {limit}")
+    if len(text) <= limit:
         return None
+    head = limit // 2
+    tail = limit - head
     folder = Path(ROOT) / OUTPUT_DIR_NAME
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"{uuid.uuid4().hex}.txt"
     target.write_text(text, encoding="utf-8")
     path = to_fs(str(target))
-    elided = len(text) - OUTPUT_HEAD_CHARS - OUTPUT_TAIL_CHARS
+    elided = len(text) - head - tail
     return {
         "text": (
-            text[:OUTPUT_HEAD_CHARS]
+            text[:head]
             + f"\n\n... [省略 {elided} 字符，完整内容见 {path}] ...\n\n"
-            + text[-OUTPUT_TAIL_CHARS:]
+            + text[-tail:]
         ),
         "elided_chars": elided,
         "output_file": path,

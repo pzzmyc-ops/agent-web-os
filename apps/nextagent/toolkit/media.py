@@ -5,14 +5,13 @@
 
 图片 / 视频 / 音频直接内嵌播放,其余任何格式一律给一张下载卡片。
 
-怎么送到前端:返回值里带一个 `_media` 对象,tool_tracker.ToolTracker._lift_media
-按 call_id 把它贴到**这次调用自己的工具块**的 block_end 上(并顺手从模型看到的结果里
-删掉,那段内容是给前端渲染用的)。前端 applyToolMedia 按 mediaType 决定渲成
-img / video / audio / 下载卡。
+怎么送到前端:工具返回一个 dict,其中 `media` 是渲染载荷。注册时给了 render /
+present 两个投影:render 把 media 之外的字段给模型看,present 把 media 交给
+tool_guard 按 call_id 暂存,ToolTracker 在结果到达时贴到**这次调用自己的工具块**的
+block_end 上。前端 applyToolMedia 按 mediaType 决定渲成 img / video / audio / 下载卡。
 
-为什么不走 TurnContext 通道:那条路只能拿到「最后一个」工具块(见
-ToolTracker.current_block),而模型很自然会在一条消息里连着调好几次 render_media,
-那样几张图会全挤到同一个块上。跟着返回值走就不会错位。
+载荷跟着 call_id 走而不是「当前工具块」:模型很自然会在一条消息里连着调好几次
+render_media,按 call_id 对应才不会把几张图挤到同一个块上。
 
 同一份载荷也进 event_bus → 随 assistant 消息的 blocks 落盘 → 刷新、切会话、重连都还在。
 
@@ -106,12 +105,21 @@ def _infer_kind(rel: str, explicit: str) -> str:
     return "file"
 
 
-def _err(msg: str) -> str:
-    return json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
+def _err(msg: str) -> dict:
+    return {"ok": False, "error": msg}
 
 
 def _read_url(rel: str) -> str:
     return "/workspace/read?path=" + quote(rel, safe="")
+
+
+def render_shown(args: dict, value: dict) -> str:
+    return json.dumps({k: v for k, v in value.items() if k != "media"}, ensure_ascii=False)
+
+
+def present_shown(args: dict, value: dict) -> dict | None:
+    media = value.get("media")
+    return media if isinstance(media, dict) else None
 
 
 @registry.register(
@@ -120,13 +128,15 @@ def _read_url(rel: str) -> str:
     summary="把工作区里的文件展示给用户(图/视频/音频内嵌播放,其他给下载卡)",
     description=DESCRIPTION,
     doc=RENDER_MEDIA_DOC,
+    render=render_shown,
+    present=present_shown,
 )
 async def render_media(
     path: str = "",
     type: str = "",
     caption: str = "",
     paths: Optional[list[str]] = None,
-) -> str:
+) -> dict:
     """把工作区里已存在的文件展示给用户。只负责展示,不生成内容。
 
     Args:
@@ -182,12 +192,11 @@ async def render_media(
         cap = str(caption or "").strip()
         if cap:
             payload["textContent"] = cap
-        return json.dumps(
-            {"ok": True, "path": rel, "kind": kind, "url": urls[0], "shown": True,
-             "note": "已展示给用户,不用再把 URL 或路径复述一遍",
-             "_media": payload},
-            ensure_ascii=False,
-        )
+        return {
+            "ok": True, "path": rel, "kind": kind, "url": urls[0], "shown": True,
+            "note": "已展示给用户,不用再把 URL 或路径复述一遍",
+            "media": payload,
+        }
 
     # 多文件:走网格。content 保留 markdown 形式(多行),urls 填满供 buildMediaHtmlFromUrls 用
     if kind == "file":
@@ -212,12 +221,11 @@ async def render_media(
     cap = str(caption or "").strip()
     if cap:
         payload["textContent"] = cap
-    return json.dumps(
-        {"ok": True, "path": [r for r, _f in items], "kind": kind, "url": urls, "shown": True,
-         "note": "已展示给用户,不用再把 URL 或路径复述一遍",
-         "_media": payload},
-        ensure_ascii=False,
-    )
+    return {
+        "ok": True, "path": [r for r, _f in items], "kind": kind, "url": urls, "shown": True,
+        "note": "已展示给用户,不用再把 URL 或路径复述一遍",
+        "media": payload,
+    }
 
 
 RENDER_TEXT_DOC = """把工作区里已存在的文本文件原文展示到对话文本框。
@@ -237,8 +245,10 @@ path 用真实绝对路径(正斜杠);相对路径按工作区目录解析。不
     summary="把工作区文本文件的原文展示到对话文本框",
     description="展示工作区文本",
     doc=RENDER_TEXT_DOC,
+    render=render_shown,
+    present=present_shown,
 )
-async def render_text(path: str) -> str:
+async def render_text(path: str) -> dict:
     try:
         rel, full = _resolve(path)
     except ValueError as e:
@@ -257,14 +267,11 @@ async def render_text(path: str) -> str:
         "mediaContent": text,
         "textContent": text,
     }
-    return json.dumps(
-        {
-            "ok": True,
-            "path": rel,
-            "kind": "text",
-            "shown": True,
-            "note": "原文已展示到文本框,不要再复述文件内容、数字或名字",
-            "_media": payload,
-        },
-        ensure_ascii=False,
-    )
+    return {
+        "ok": True,
+        "path": rel,
+        "kind": "text",
+        "shown": True,
+        "note": "原文已展示到文本框,不要再复述文件内容、数字或名字",
+        "media": payload,
+    }

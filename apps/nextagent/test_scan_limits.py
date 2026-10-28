@@ -19,6 +19,18 @@ from apps.nextagent.toolkit import glob as glob_tool
 from apps.nextagent.toolkit import grep as grep_tool
 
 
+def run_terminal(**kwargs):
+    from apps.nextagent.toolkit.terminal import render_terminal, terminal
+
+    return json.loads(render_terminal(kwargs, terminal(**kwargs)))
+
+
+def run_process(**kwargs):
+    from apps.nextagent.toolkit.process import process, render_process
+
+    return json.loads(render_process(kwargs, process(**kwargs)))
+
+
 class TempWorkspaceDir(unittest.TestCase):
     dir_name = ""
     file_count = 0
@@ -146,13 +158,11 @@ class TerminalTimeoutBackgroundTests(unittest.TestCase):
     def test_foreground_timeout_backgrounds_instead_of_killing(self):
         from fm.backend.pathutil import IS_WINDOWS
         from fm.backend.terminal import REGISTRY
-        from apps.nextagent.toolkit.process import process
-        from apps.nextagent.toolkit.terminal import terminal
 
         command = "Write-Output started; Start-Sleep -Seconds 8" if IS_WINDOWS else "echo started; sleep 8"
 
         def run():
-            return json.loads(terminal(command=command, workdir=self.temp.name, timeout=1))
+            return run_terminal(command=command, workdir=self.temp.name, timeout=1)
 
         result = self._call(run)
         session_id = result["session_id"]
@@ -163,14 +173,14 @@ class TerminalTimeoutBackgroundTests(unittest.TestCase):
         self.assertIn("started", result["output"])
 
         def poll():
-            return json.loads(process(action="poll", session_id=session_id))
+            return run_process(action="poll", session_id=session_id)
 
         polled = self._call(poll)
         self.assertEqual(polled["status"], "running")
         self.assertIn("started", polled["output_preview"])
 
         def kill():
-            return json.loads(process(action="kill", session_id=session_id))
+            return run_process(action="kill", session_id=session_id)
 
         killed = self._call(kill)
         self.assertEqual(killed["status"], "closed")
@@ -179,13 +189,11 @@ class TerminalTimeoutBackgroundTests(unittest.TestCase):
     def test_backgrounded_command_finishes_and_keeps_full_output(self):
         from fm.backend.pathutil import IS_WINDOWS
         from fm.backend.terminal import REGISTRY
-        from apps.nextagent.toolkit.process import process
-        from apps.nextagent.toolkit.terminal import terminal
 
         command = "Write-Output A; Start-Sleep -Seconds 3; Write-Output B" if IS_WINDOWS else "echo A; sleep 3; echo B"
 
         def run():
-            return json.loads(terminal(command=command, workdir=self.temp.name, timeout=1))
+            return run_terminal(command=command, workdir=self.temp.name, timeout=1)
 
         result = self._call(run)
         self.assertEqual(result["status"], "running")
@@ -193,14 +201,14 @@ class TerminalTimeoutBackgroundTests(unittest.TestCase):
         self.addCleanup(lambda: REGISTRY.close(session_id) if REGISTRY.has(session_id) else None)
 
         def wait():
-            return json.loads(process(action="wait", session_id=session_id, timeout=20))
+            return run_process(action="wait", session_id=session_id, timeout=20)
 
         waited = self._call(wait)
         self.assertEqual(waited["status"], "idle")
         self.assertEqual(waited["exit_code"], 0)
 
         def log():
-            return json.loads(process(action="log", session_id=session_id))
+            return run_process(action="log", session_id=session_id)
 
         logged = self._call(log)
         self.assertIn("A", logged["output"])
@@ -209,12 +217,11 @@ class TerminalTimeoutBackgroundTests(unittest.TestCase):
     def test_turn_without_desktop_id_opens_on_the_online_desktop(self):
         from fm.backend.terminal import REGISTRY
         from apps.nextagent.toolkit._context import TurnContext, bind_turn
-        from apps.nextagent.toolkit.terminal import terminal
 
         ctx = TurnContext(thread_id="t-scan", task_id="k-scan", desktop_id="")
 
         def run():
-            return json.loads(terminal(command="", workdir=self.temp.name))
+            return run_terminal(command="", workdir=self.temp.name)
 
         with bind_turn(ctx), \
              mock.patch("fm.backend.terminal.online_desktop_ids", lambda: ["desk"]), \
@@ -260,13 +267,11 @@ class TerminalOutputCapTests(unittest.TestCase):
 
     def test_huge_single_line_is_capped_and_saved(self):
         from fm.backend.terminal import REGISTRY
-        from apps.nextagent.toolkit.process import process
-        from apps.nextagent.toolkit.terminal import terminal
 
         command = f"python -c \"print('y'*{self.size})\""
 
         def run():
-            return json.loads(terminal(command=command, workdir=self.temp.name, timeout=60))
+            return run_terminal(command=command, workdir=self.temp.name, timeout=60)
 
         result = self._call(run)
         session_id = result["session_id"]
@@ -274,19 +279,18 @@ class TerminalOutputCapTests(unittest.TestCase):
         self.assertEqual(result["exit_code"], 0)
         self._assert_capped(result)
 
-        logged = self._call(lambda: json.loads(process(action="log", session_id=session_id)))
+        logged = self._call(lambda: run_process(action="log", session_id=session_id))
         self._assert_capped(logged)
 
-        killed = self._call(lambda: json.loads(process(action="kill", session_id=session_id)))
+        killed = self._call(lambda: run_process(action="kill", session_id=session_id))
         self.assertEqual(killed["status"], "closed")
         self._assert_capped(killed)
 
     def test_short_output_is_untouched(self):
         from fm.backend.terminal import REGISTRY
-        from apps.nextagent.toolkit.terminal import terminal
 
         def run():
-            return json.loads(terminal(command="python -c \"print('short')\"", workdir=self.temp.name, timeout=60))
+            return run_terminal(command="python -c \"print('short')\"", workdir=self.temp.name, timeout=60)
 
         result = self._call(run)
         session_id = result["session_id"]

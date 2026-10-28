@@ -21,15 +21,15 @@ from ..maf_tools.interrupt import is_interrupted, worker_thread_of_task
 
 from ._context import current_turn
 from ._registry import registry
-from ._spill import OUTPUT_HEAD_CHARS, OUTPUT_TAIL_CHARS, spill_text
+from ._spill import OUTPUT_HEAD_CHARS, OUTPUT_TAIL_CHARS, RENDERED_PAYLOAD_LIMIT_CHARS, spill_text
 
-DESCRIPTION = (
-    "在桌面终端里执行命令。"
-    "有人无人用 mark 自己标。开始用这间终端时填有人。"
-    "只有你认为用户的这次任务已经完成，才填无人。"
-    "一条命令结束、终端变空闲、还要继续查或改，都不是任务完成，mark 留空。"
-    "无人的可以进，有人的不要进。没有能进的再新开。"
+MARK_RULE = (
+    "有人、无人，或留空。留空不改牌子。开始占用这间终端时填有人。"
+    "只有你认为用户的这次任务已经完成，才填无人；"
+    "一条命令结束、终端变空闲、还要继续查或改，都不是任务完成。"
 )
+
+DESCRIPTION = "在桌面终端里执行命令。终端共用：无人的可以进，有人的不要进，没有能进的再新开。"
 
 TERMINAL_DOC = """在 webos 的终端窗口里操作一个系统 shell。终端是共用的。
 
@@ -98,7 +98,7 @@ def terminal_windows_note() -> str:
     from fm.backend.terminal import sign_text
 
     rows = REGISTRY.list()
-    lines = ["终端牌子（有人无人只在你填 mark 时改。只有你认为这次任务已经完成才能标无人，命令结束不要标）："]
+    lines = [f"终端牌子（mark：{MARK_RULE}）："]
     if not rows:
         lines.append("现在没有终端。需要时新开一间。")
         return "\n".join(lines)
@@ -128,9 +128,11 @@ def fit_output(payload: dict) -> dict:
     return payload
 
 
-def _dump(payload: dict, command: str = "") -> str:
+def render_terminal(args: dict, value: dict) -> str:
     from ..maf_tools.agent.redact import redact_sensitive_text, redact_terminal_output
 
+    payload = dict(value)
+    command = str(args.get("command") or "")
     if payload.get("output"):
         payload["output"] = redact_terminal_output(payload["output"], command)
     if payload.get("command"):
@@ -138,11 +140,8 @@ def _dump(payload: dict, command: str = "") -> str:
     return json.dumps(fit_output(payload), ensure_ascii=False)
 
 
-def _fail(message: str) -> str:
-    return json.dumps(
-        {"output": "", "exit_code": None, "session_id": "", "status": "error", "error": message},
-        ensure_ascii=False,
-    )
+def _fail(message: str) -> dict:
+    return {"output": "", "exit_code": None, "session_id": "", "status": "error", "error": message}
 
 
 @registry.register(
@@ -151,6 +150,8 @@ def _fail(message: str) -> str:
     summary="在桌面终端里执行命令",
     description=DESCRIPTION,
     doc=TERMINAL_DOC,
+    render=render_terminal,
+    max_result_chars=RENDERED_PAYLOAD_LIMIT_CHARS,
 )
 def terminal(
     command: str = "",
@@ -161,11 +162,8 @@ def terminal(
     notify_on_complete: bool = False,
     watch_patterns: list[str] | None = None,
     pty: bool = True,
-    mark: Annotated[
-        Literal["", "有人", "无人"],
-        "有人、无人，或留空。留空不改牌子。开始占用填有人。只有你认为用户的这次任务已经完成才填无人。命令结束不是任务完成。",
-    ] = "",
-) -> str:
+    mark: Annotated[Literal["", "有人", "无人"], MARK_RULE] = "",
+) -> dict:
     """在桌面终端里执行一条命令，或只改有人无人牌子。
 
     Args:
@@ -177,7 +175,7 @@ def terminal(
         notify_on_complete: 后台命令结束时叫你一声。一般不要设，结果自己用 process 看；只给要跑很久、你打算先结束这一轮的任务。不要和 watch_patterns 同时设。
         watch_patterns: 后台输出里出现这些字时通知你。同一终端至少隔 15 秒。
         pty: 必须为 True。这个终端始终是系统终端。
-        mark: 有人、无人，或留空。只有任务完成才填无人。
+        mark: 有人无人牌子，规则见参数说明。
     """
     mark = str(mark or "").strip()
     if mark not in {"", "有人", "无人"}:
@@ -202,7 +200,7 @@ def terminal(
     if wait_seconds <= 0:
         return _fail("timeout 必须大于 0")
 
-    def run() -> str:
+    def run() -> dict:
         sid = str(session_id or "")
         if sid:
             if workdir:
@@ -240,7 +238,7 @@ def terminal(
             }
             if note:
                 payload["note"] = note
-            return _dump(payload)
+            return payload
 
         focus_session(session, desktop_id)
         session.submit_line(
@@ -262,7 +260,7 @@ def terminal(
                 payload["note"] = note
             if mark == "无人":
                 set_occupancy(session, "无人", session_key, _chat_name(ctx, session_key))
-            return _dump(payload, command)
+            return payload
 
         result = session.wait_command(wait_seconds, is_interrupted)
         payload = {
@@ -276,7 +274,7 @@ def terminal(
             payload["note"] = note
         if mark == "无人":
             set_occupancy(session, "无人", session_key, _chat_name(ctx, session_key))
-        return _dump(payload, command)
+        return payload
 
     with worker_thread_of_task(ctx.task_id):
         try:

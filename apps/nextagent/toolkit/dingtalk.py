@@ -107,6 +107,8 @@ def _abs_dir(raw: str) -> tuple[str, Path]:
     summary="查看绑定钉钉群的消息",
     description="查看钉钉群消息",
     doc=LIST_DOC,
+    concurrency_safe=True,
+    timeout_seconds=300,
 )
 def dingtalk_list_messages(
     start: str = "",
@@ -125,6 +127,7 @@ def dingtalk_list_messages(
     summary="下载绑定钉钉群的图片和文件",
     description="下载钉钉群附件",
     doc=DOWNLOAD_DOC,
+    timeout_seconds=300,
 )
 def dingtalk_download_files(
     start: str = "",
@@ -149,6 +152,7 @@ def dingtalk_download_files(
     summary="立刻往绑定钉钉群发文字",
     description="发送文字到钉钉群",
     doc=SEND_TEXT_DOC,
+    timeout_seconds=120,
 )
 def dingtalk_send_text(text: str, conversation_id: str = "", group: str = "") -> str:
     body = (text or "").strip()
@@ -165,6 +169,7 @@ def dingtalk_send_text(text: str, conversation_id: str = "", group: str = "") ->
     summary="把工作区文件发到绑定钉钉群",
     description="发送文件到钉钉群",
     doc=SEND_FILE_DOC,
+    timeout_seconds=300,
 )
 def dingtalk_send_file(path: str, conversation_id: str = "", group: str = "") -> str:
     cid, name = _target(conversation_id, group)

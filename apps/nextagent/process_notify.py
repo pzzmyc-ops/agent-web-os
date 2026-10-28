@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 from agent_framework import FunctionInvocationContext, FunctionMiddleware
 
@@ -20,9 +19,7 @@ class ProcessNotifyMiddleware(FunctionMiddleware):
             context.result = _append_note(context.result, terminal_windows_note())
 
 
-def _append_note(result: Any, note: str) -> str:
-    if result is None:
-        return note
-    if isinstance(result, str):
-        return result + "\n\n" + note
-    return json.dumps(result, ensure_ascii=False, default=str) + "\n\n" + note
+def _append_note(result: object, note: str) -> str:
+    if not isinstance(result, str):
+        raise TypeError(f"终端工具结果应已被 ToolGuardMiddleware 渲染成 str，收到 {type(result).__name__}")
+    return result + "\n\n" + note

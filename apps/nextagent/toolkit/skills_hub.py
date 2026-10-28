@@ -30,6 +30,7 @@ identifier 示例:
     summary="搜索/安装/卸载网上的技能包",
     description="Skills Hub",
     doc=SKILLS_HUB_DOC,
+    timeout_seconds=300,
 )
 def skills_hub(action: str, query: str = "", identifier: str = "", name: str = "", limit: int = 10) -> str:
     action = str(action or "").strip().lower()

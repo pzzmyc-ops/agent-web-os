@@ -11,10 +11,11 @@ from ..maf_tools.process_registry import _redact_process_result
 
 from ._context import current_turn
 from ._registry import registry
-from .terminal import fit_output
+from ._spill import RENDERED_PAYLOAD_LIMIT_CHARS
+from .terminal import MARK_RULE, fit_output
 
 
-PROCESS_DOC = """查看或操作桌面上的终端。有人无人要用 terminal 的 mark 改，这里改不了。只有你认为用户的这次任务已经完成，才用 terminal 标无人；命令结束、终端空闲都不要标。有人（不是你）的终端不要写、不要关。
+PROCESS_DOC = f"""查看或操作桌面上的终端。有人无人要用 terminal 的 mark 改，这里改不了。mark 规则：{MARK_RULE}有人（不是你）的终端不要写、不要关。
 
 Actions:
     list: 列出还开着的终端
@@ -27,8 +28,8 @@ Actions:
     close: 发送 Ctrl+D，不关窗口"""
 
 
-def _dump(payload: dict) -> str:
-    return json.dumps(fit_output(_redact_process_result(payload)), ensure_ascii=False)
+def render_process(args: dict, value: dict) -> str:
+    return json.dumps(fit_output(_redact_process_result(dict(value))), ensure_ascii=False)
 
 
 @registry.register(
@@ -37,6 +38,8 @@ def _dump(payload: dict) -> str:
     summary="管理桌面终端: list/poll/log/wait/kill/write/submit/close",
     description="管理桌面终端",
     doc=PROCESS_DOC,
+    render=render_process,
+    max_result_chars=RENDERED_PAYLOAD_LIMIT_CHARS,
 )
 def process(
     action: str,
@@ -45,7 +48,7 @@ def process(
     timeout: int | None = None,
     offset: int = 0,
     limit: int = 200,
-) -> str:
+) -> dict:
     """管理桌面上打开的终端。
 
     Actions:
@@ -66,25 +69,22 @@ def process(
     chat_key = get_current_session_key(default="") or ""
 
     if action == "list":
-        return json.dumps({"processes": REGISTRY.list()}, ensure_ascii=False)
+        return {"processes": REGISTRY.list()}
 
     if action not in {"poll", "log", "wait", "kill", "write", "submit", "close"}:
-        return json.dumps(
-            {"error": f"Unknown process action: {action}. Use: list, poll, log, wait, kill, write, submit, close"},
-            ensure_ascii=False,
-        )
+        return {"error": f"Unknown process action: {action}. Use: list, poll, log, wait, kill, write, submit, close"}
     if not session_id:
-        return json.dumps({"error": f"session_id is required for {action}"}, ensure_ascii=False)
+        return {"error": f"session_id is required for {action}"}
 
     try:
         session = REGISTRY.get(session_id)
     except KeyError:
         if action == "kill":
             try:
-                return _dump(close_session(session_id, desktop_id))
+                return close_session(session_id, desktop_id)
             except KeyError:
-                return json.dumps({"status": "not_found", "error": f"No process with ID {session_id}"}, ensure_ascii=False)
-        return json.dumps({"status": "not_found", "error": f"No process with ID {session_id}"}, ensure_ascii=False)
+                return {"status": "not_found", "error": f"No process with ID {session_id}"}
+        return {"status": "not_found", "error": f"No process with ID {session_id}"}
 
     if action in {"poll", "log"}:
         session.mark_result_seen()
@@ -101,7 +101,7 @@ def process(
         }
         if session.state != "running" and session.exit_code is not None:
             result["exit_code"] = session.exit_code
-        return _dump(result)
+        return result
 
     if action == "log":
         visible = session.visible_text()
@@ -111,21 +111,20 @@ def process(
             selected = lines[-limit:]
         else:
             selected = lines[offset:offset + limit]
-        return _dump({
+        return {
             "session_id": session.id,
             "command": session.command,
             "status": session.state,
             "output": "\n".join(selected),
             "total_lines": total,
             "showing": f"{len(selected)} lines",
-        })
+        }
 
     if action == "wait":
         seconds = 180 if timeout is None else timeout
 
-        def run_wait() -> str:
-            result = session.wait_command(seconds, is_interrupted)
-            return _dump(result)
+        def run_wait() -> dict:
+            return session.wait_command(seconds, is_interrupted)
 
         if ctx is None:
             return run_wait()
@@ -138,19 +137,19 @@ def process(
         if action in {"write", "submit", "close", "kill"}:
             if session.session_key and session.session_key != chat_key:
                 who = session.owner or "别人"
-                return json.dumps({"status": "error", "error": f"这个终端有人（{who}）"}, ensure_ascii=False)
+                return {"status": "error", "error": f"这个终端有人（{who}）"}
         if action == "kill":
-            return _dump(close_session(session_id, desktop_id))
+            return close_session(session_id, desktop_id)
         if action == "write":
             focus_session(session, desktop_id)
             session.write_raw(str(data))
-            return json.dumps({"status": "ok", "bytes_written": len(str(data))}, ensure_ascii=False)
+            return {"status": "ok", "bytes_written": len(str(data))}
         if action == "submit":
             focus_session(session, desktop_id)
             session.submit_line(str(data))
-            return json.dumps({"status": "ok"}, ensure_ascii=False)
+            return {"status": "ok"}
         focus_session(session, desktop_id)
         session.send_eot()
-        return json.dumps({"status": "ok", "message": "EOF sent"}, ensure_ascii=False)
+        return {"status": "ok", "message": "EOF sent"}
     except (RuntimeError, ValueError) as exc:
-        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
+        return {"status": "error", "error": str(exc)}

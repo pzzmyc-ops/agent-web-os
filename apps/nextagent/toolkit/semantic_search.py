@@ -40,6 +40,8 @@ def _render_chunk(path: str, start: int, end: int, text: str, score: float) -> s
     summary="按含义搜索工作区(需要先建索引)",
     description=DESCRIPTION,
     doc=SEMANTIC_DOC,
+    concurrency_safe=True,
+    timeout_seconds=120,
 )
 async def semantic_search(query: str, target_directory: str = "", num_results: int = DEFAULT_RESULTS) -> str:
     """按含义在语义索引里搜索相关代码或文档块。

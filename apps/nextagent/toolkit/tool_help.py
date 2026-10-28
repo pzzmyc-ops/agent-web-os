@@ -5,8 +5,6 @@
 """
 from __future__ import annotations
 
-import json
-
 from ._registry import registry
 
 
@@ -16,8 +14,9 @@ from ._registry import registry
     summary="查阅工具的完整用法文档(详细参数、示例、注意事项)",
     description="查阅工具用法",
     doc="查阅某个或多个工具的完整用法文档。不传 name 则返回所有可用工具的名称列表。",
+    concurrency_safe=True,
 )
-def tool_help(name: str = "") -> str:
+def tool_help(name: str = "") -> dict:
     """查阅工具的完整用法文档。
 
     不传 name:返回所有可用工具的名称与简短描述。
@@ -31,14 +30,13 @@ def tool_help(name: str = "") -> str:
         items = []
         for s in registry.specs():
             items.append({"name": s.name, "brief": s.summary})
-        return json.dumps({"tools": items}, ensure_ascii=False)
+        return {"tools": items}
 
     body = registry.get_body(name)
     if not body:
-        available = [s.name for s in registry.specs()]
-        return json.dumps({
+        return {
             "error": f"没有叫 '{name}' 的工具",
-            "available_tools": available,
-        }, ensure_ascii=False)
+            "available_tools": [s.name for s in registry.specs()],
+        }
 
-    return json.dumps({"name": name, "documentation": body}, ensure_ascii=False)
+    return {"name": name, "documentation": body}

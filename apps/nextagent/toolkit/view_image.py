@@ -58,6 +58,7 @@ def _err(msg: str) -> str:
     summary="把工作区里的图片送到模型眼前(模型直接看画面)",
     description=DESCRIPTION,
     doc=VIEW_IMAGE_DOC,
+    concurrency_safe=True,
 )
 async def view_image(
     path: str = "",

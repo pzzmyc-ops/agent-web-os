@@ -213,6 +213,7 @@ def _finish(body_lines: list[str], stats: str) -> str:
     summary="ripgrep 精确搜索文件内容",
     description=DESCRIPTION,
     doc=GREP_DOC,
+    concurrency_safe=True,
 )
 def grep(
     pattern: str,

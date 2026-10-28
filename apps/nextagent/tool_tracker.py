@@ -107,7 +107,10 @@ class ToolTracker:
         同时补一条 tool_result 事件:只有调用没有结果的一半消息发给上游会被判 400。
         以前的做法是投影时把没跑完的调用整块丢掉,模型下一轮就会把同一件事重做一遍。
         """
+        from .tool_guard import pop_presentation
+
         for call_id, call in list(self._calls.items()):
+            pop_presentation(call_id)
             self._log_call(call_id, call)
             end_data = {
                 "blockId": call["blockId"], "kind": "tool", "name": call["name"],
@@ -153,14 +156,17 @@ class ToolTracker:
     def current_block(self) -> dict[str, Any] | None:
         """正在执行的那个工具调用(blockId / name / startedAt)。
 
-        给 clarify 用:工具函数被框架调用时拿不到自己的 call_id,而前端要求把问题
-        补在**它自己的工具块**上。工具体执行时,它的 function_call 已经完整流完,
-        所以 self._current 就是它 —— 这是唯一能把两者对上的时机。
-
-        并行工具调用时 _current 可能不是调用方那个块。mafagent 目前是顺序执行工具,
-        且 clarify 会阻塞整轮(至多一个在飞),所以够用;真要并行,得由框架把 call_id
-        传进工具上下文才能彻底解决。
+        给 clarify 用:前端要求把问题补在**它自己的工具块**上。框架一轮里的多个
+        工具调用是并行执行的,所以不能用「最后一个流完的调用」来猜;
+        tool_guard.ToolGuardMiddleware 在执行工具体期间把这次调用的 call_id 钉在
+        ContextVar 上,这里按它精确取块。不在中间件里(单测直接调工具)时才退回
+        到最后一个调用。
         """
+        from .tool_guard import current_call_id
+
+        call_id = current_call_id()
+        if call_id:
+            return self._calls.get(call_id)
         if not self._current:
             return None
         return self._calls.get(self._current)
@@ -172,7 +178,7 @@ class ToolTracker:
         blockId/kind/name/input/status/mediaSkill 五个字段,不认识的会丢掉。
         blockPatch 会合并 clarify、重新触发 renderBlock。
         """
-        call = self._calls.get(self._current) if self._current else None
+        call = self.current_block()
         data = {"blockId": block_id, "kind": "tool", **patch}
         if call is not None:
             data["name"] = call["name"]
@@ -237,33 +243,24 @@ class ToolTracker:
         return parsed if isinstance(parsed, dict) else {"value": parsed}
 
     @staticmethod
-    def _lift_media(raw: str, block_id: str) -> tuple[str, dict[str, Any] | None]:
-        """把工具结果里的 `_media` 提走 → (给模型看的结果, 给前端渲染的载荷)。
+    def _take_media(call_id: str, key: str, block_id: str) -> dict[str, Any] | None:
+        """取这次调用的前端渲染载荷(工具 present() 的产物,由 tool_guard 按 call_id 暂存)。
 
-        render_media 把渲染载荷塞在返回 JSON 的 `_media` 键里(见 toolkit/media.py)。
-        载荷贴到**这次调用自己**的 block_end 上,同时从模型看到的结果里删掉 —— 那段
-        内容是给前端渲染用的,留着模型会把 URL 和路径再复述一遍。
-
+        载荷贴到**这次调用自己**的 block_end 上;模型看到的结果里本来就没有它。
         bgTaskId / mediaTaskId 在这里补:前端拿它定位媒体区、做版本号,而工具函数
         执行时拿不到自己的 blockId。
 
-        不是媒体结果就原样返回,一个字节都不动 —— 普通工具结果不能因为路过这里被
-        重新序列化。
+        call_id 是结果上带的 id,key 是实际配对上的调用 id(结果没带 id 时回退到
+        最后一个调用)。两个都取走,配对上的那个贴到块上,另一个只是不让它留在暂存区里。
         """
-        if not isinstance(raw, str) or "_media" not in raw:
-            return raw, None
-        try:
-            parsed = json.loads(raw)
-        except Exception:
-            return raw, None
-        if not isinstance(parsed, dict):
-            return raw, None
-        media = parsed.get("_media")
-        if not isinstance(media, dict):
-            return raw, None
-        rest = {k: v for k, v in parsed.items() if k != "_media"}
-        payload = {**media, "bgTaskId": block_id, "mediaTaskId": block_id}
-        return json.dumps(rest, ensure_ascii=False), payload
+        from .tool_guard import pop_presentation
+
+        by_call = pop_presentation(call_id) if call_id else None
+        by_key = pop_presentation(key) if key and key != call_id else None
+        media = by_key if by_key is not None else by_call
+        if media is None:
+            return None
+        return {**media, "bgTaskId": block_id, "mediaTaskId": block_id}
 
     async def _on_call(self, content: Any) -> None:
         call_id = str(getattr(content, "call_id", "") or "")
@@ -312,6 +309,9 @@ class ToolTracker:
             key = self._current
             call = self._calls.pop(self._current, None)
         if call is None:
+            from .tool_guard import pop_presentation
+
+            pop_presentation(call_id)
             return
 
         exc = getattr(content, "exception", None)
@@ -319,7 +319,7 @@ class ToolTracker:
         text = "" if result is None else (result if isinstance(result, str) else str(result))
         status = "error" if exc else "done"
         parsed = self._parse_args(call["args"])
-        text, media = self._lift_media(text, call["blockId"])
+        media = self._take_media(call_id, key, call["blockId"])
         if call.get("silent_ui"):
             now = now_ms()
             end_data = {

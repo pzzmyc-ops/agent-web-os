@@ -329,4 +329,5 @@ def build_chat_client(cfg: Config) -> MafChatClient:
         base_url=cfg.base_url,
     )
     client.function_invocation_configuration["max_iterations"] = MAX_TOOL_ITERATIONS_PER_TURN
+    client.function_invocation_configuration["include_detailed_errors"] = True
     return client

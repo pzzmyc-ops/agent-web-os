@@ -144,6 +144,8 @@ def _abs_dir(raw: str) -> tuple[str, Path]:
     summary="查看绑定飞书群的消息",
     description="查看飞书群消息",
     doc=LIST_DOC,
+    concurrency_safe=True,
+    timeout_seconds=300,
 )
 def feishu_list_messages(
     start: str = "",
@@ -164,6 +166,7 @@ def feishu_list_messages(
     summary="下载绑定飞书群的图片和文件",
     description="下载飞书群附件",
     doc=DOWNLOAD_DOC,
+    timeout_seconds=300,
 )
 def feishu_download_files(
     start: str = "",
@@ -190,6 +193,7 @@ def feishu_download_files(
     summary="立刻往绑定飞书群发文字",
     description="发送文字到飞书群",
     doc=SEND_TEXT_DOC,
+    timeout_seconds=120,
 )
 def feishu_send_text(text: str, conversation_id: str = "", group: str = "") -> str:
     body = (text or "").strip()
@@ -215,6 +219,7 @@ def feishu_send_text(text: str, conversation_id: str = "", group: str = "") -> s
     summary="把工作区文件发到绑定飞书群",
     description="发送文件到飞书群",
     doc=SEND_FILE_DOC,
+    timeout_seconds=300,
 )
 def feishu_send_file(path: str, conversation_id: str = "", group: str = "") -> str:
     if _webhook_thread():

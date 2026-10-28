@@ -280,6 +280,7 @@ def build_web_agent(cfg: Config, store: Store) -> WebAgent:
     instructions = INSTRUCTIONS_BASE
 
     from .process_notify import ProcessNotifyMiddleware
+    from .tool_guard import ToolGuardMiddleware
 
     agent = Agent(
         client=build_chat_client(cfg),
@@ -289,7 +290,7 @@ def build_web_agent(cfg: Config, store: Store) -> WebAgent:
         context_providers=[history, skills, file_access],
         require_per_service_call_history_persistence=True,
         tools=tool_registry.function_tools(),
-        middleware=[ProcessNotifyMiddleware()],
+        middleware=[ProcessNotifyMiddleware(), ToolGuardMiddleware()],
     )
     return WebAgent(
         agent=agent,

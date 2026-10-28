@@ -308,14 +308,15 @@ class DispatchTests(unittest.TestCase):
         ), mock.patch(
             "apps.nextagent.toolkit.terminal.REGISTRY"
         ) as registry:
-            text = terminal(
+            result = terminal(
                 command="echo hi",
                 session_id="s1",
                 background=True,
                 notify_on_complete=True,
             )
         registry.get.assert_not_called()
-        self.assertIn("会话", text)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("会话", result["error"])
 
     def test_busy_report_waits_in_the_session_queue(self) -> None:
         seen = []

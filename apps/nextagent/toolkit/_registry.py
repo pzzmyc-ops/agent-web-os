@@ -22,9 +22,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from agent_framework import tool
+from agent_framework import SKIP_PARSING, tool
 
 from ..framework_compat import FunctionTool
+from ._spill import OUTPUT_LIMIT_CHARS
+
+Render = Callable[[dict, Any], str]
+Present = Callable[[dict, Any], "dict | None"]
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,11 @@ class ToolSpec:
     tool: FunctionTool
     available: Callable[[], bool] | None = None
     body: str = ""
+    concurrency_safe: bool = False
+    timeout_seconds: float | None = None
+    max_result_chars: int = OUTPUT_LIMIT_CHARS
+    render: Render | None = None
+    present: Present | None = None
 
     def is_available(self) -> bool:
         if self.available is None:
@@ -72,13 +81,37 @@ class ToolRegistry:
         description: str | None = None,
         doc: str = "",
         max_invocations: int | None = None,
+        concurrency_safe: bool = False,
+        timeout_seconds: float | None = None,
+        max_result_chars: int = OUTPUT_LIMIT_CHARS,
+        render: Render | None = None,
+        present: Present | None = None,
     ):
         """把一个普通函数注册成工具。装饰器,返回框架的 FunctionTool。
 
         description 给模型看(工具列表里的简短标题,≤10 字);
         doc 是完整的用法文档,模型通过 tool_help 按需查阅;
         summary 给用户看(UI 列表)。
+
+        返回值契约:工具函数返回 str 直接给模型;返回 dict/list 等结构化值时,
+        由 render(args, value) 投影成模型文本(没给 render 就 json 序列化),
+        由 present(args, value) 投影成前端卡片载荷(没给就没有卡片)。两者都是纯函数,
+        在 tool_guard.ToolGuardMiddleware 里统一调用;工具函数本身不再拼展示文本。
+
+        timeout_seconds 是协作式的:到点后 guard 放弃等待并释放并发闸门,但不能
+        杀掉还在跑的工具体。async 工具必须响应取消;同步工具跑在线程池里收不到取消,
+        会一直跑到自然结束,这段时间内它可能和后续的互斥工具重叠。所以只给
+        「超时后继续跑也无害」的工具(查询、网络读、发送)声明超时,会改本地状态的不要声明。
+
+        max_result_chars 是 guard 对渲染后文本的总上限。render 自己按字段截断过的工具
+        (terminal / process 的 output 字段)要把它调大到 RENDERED_PAYLOAD_LIMIT_CHARS,
+        否则同一段输出会被截两次、落两个文件。
         """
+
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise ValueError(f"工具 {name or '?'} 的 timeout_seconds 必须大于 0，收到 {timeout_seconds}")
+        if max_result_chars < 2:
+            raise ValueError(f"工具 {name or '?'} 的 max_result_chars 至少为 2，收到 {max_result_chars}")
 
         def deco(func: Callable[..., Any]) -> FunctionTool:
             tool_name = name or func.__name__
@@ -88,6 +121,7 @@ class ToolRegistry:
                 name=tool_name,
                 description=desc or tool_name,
                 max_invocations=max_invocations,
+                result_parser=SKIP_PARSING,
             )
             if tool_name in self._specs:
                 raise ValueError(f"工具重名: {tool_name}(已属于 toolset {self._specs[tool_name].toolset})")
@@ -99,12 +133,20 @@ class ToolRegistry:
                 tool=ft,
                 available=available,
                 body=body,
+                concurrency_safe=concurrency_safe,
+                timeout_seconds=timeout_seconds,
+                max_result_chars=max_result_chars,
+                render=render,
+                present=present,
             )
             return ft
 
         return deco
 
     # ---- 查询 ----
+
+    def get(self, tool_name: str) -> ToolSpec | None:
+        return self._specs.get(tool_name)
 
     def toolsets(self) -> list[str]:
         return sorted({s.toolset for s in self._specs.values()})

@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 import json
+from typing import Annotated
 
 from ._context import require_turn
 from ._registry import registry
 
 ENTRY_DELIMITER = "\n§\n"
 
-DESCRIPTION = (
-    "保存本会话记忆。每轮会注入系统提示词。"
-    "一次调用用 operations 做完全部改动；单条用 action=add/replace/remove。"
-    "replace/remove 必须带 old_text（能唯一定位该条的子串）。"
-    "用户偏好、纠正、稳定事实才写入；过程进度和琐事不要写。"
-)
+DESCRIPTION = "保存本会话记忆，每轮注入系统提示词。只写用户偏好、纠正、稳定事实，不写过程进度和琐事。"
 
 MEMORY_DOC = """保存本会话的记忆。每个对话一份，群聊角色共用。每轮调用都会写入系统提示词。
 
@@ -94,10 +90,10 @@ async def _notify(thread_id: str) -> None:
     doc=MEMORY_DOC,
 )
 async def memory(
-    action: str = "",
-    content: str = "",
-    old_text: str = "",
-    operations: list | None = None,
+    action: Annotated[str, "单条改动：add / replace / remove。多条改动改用 operations。"] = "",
+    content: Annotated[str, "add 的新条目，或 replace 后的整条内容。"] = "",
+    old_text: Annotated[str, "replace / remove 用来定位那一条的子串，必须只命中一条。"] = "",
+    operations: Annotated[list | None, "一次做完多步：[{action, content?, old_text?}, ...]，整批成功才写入。"] = None,
 ) -> str:
     ctx = require_turn()
     store = ctx.store

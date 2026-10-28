@@ -45,6 +45,7 @@ def _normalize_pattern(pattern: str) -> str:
     summary="按文件名模式查找文件",
     description=DESCRIPTION,
     doc=GLOB_DOC,
+    concurrency_safe=True,
 )
 def glob(glob_pattern: str, target_directory: str = "") -> str:
     """按文件名 glob 查找工作区文件,按修改时间倒序。
