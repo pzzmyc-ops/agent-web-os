@@ -121,6 +121,7 @@
     }
 
     async function saveActive() {
+      if (window.FMShare) throw new Error("分享链接不能修改文件");
       if (state.mode !== "code" || !state.editor) throw new Error("当前不是代码模式");
       const content = state.editor.getValue();
       const res = await API.save(state.item.path, content);

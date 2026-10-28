@@ -175,6 +175,18 @@ class DesktopSlotTests(unittest.TestCase):
         self.assertEqual(loaded.json()["activeDesktopId"], "desk-b")
         self.assertEqual(list(desktop._desktops), [])
 
+    def test_share_page_does_not_join_or_evict_the_desktop(self):
+        with self.client.websocket_connect("/api/desktop/screen?desktopId=desk-a") as first:
+            self.assertEqual(first.receive_json()["type"], "ready")
+            with self.client.websocket_connect(
+                "/api/desktop/screen?desktopId=share-tab",
+                headers={"referer": "http://testserver/s/token"},
+            ):
+                self.assertEqual(list(desktop._desktops), ["desk-a"])
+                self.assertEqual(desktop._active_id, "desk-a")
+            self.assertEqual(list(desktop._desktops), ["desk-a"])
+            self.assertEqual(desktop._active_id, "desk-a")
+
 
 class AuthEdgeTests(unittest.TestCase):
     def setUp(self):

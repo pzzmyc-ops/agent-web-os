@@ -1,5 +1,12 @@
+function shareApiUrl(url) {
+  if (!window.FMShare || !window.FMShare.token) return url;
+  if (!String(url).startsWith("/api/")) return url;
+  return "/s/" + encodeURIComponent(window.FMShare.token) + url;
+}
+
 const API = {
   async request(url, options = {}) {
+    url = shareApiUrl(url);
     const res = await fetch(url, { ...options, cache: "no-store" });
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
@@ -115,24 +122,33 @@ const API = {
     return this.request("/api/upload", { method: "POST", body: fd });
   },
   downloadUrl(path) {
-    return `/api/download?path=${encodeURIComponent(path)}`;
+    return shareApiUrl(`/api/download?path=${encodeURIComponent(path)}`);
+  },
+  shareCreate(path, ttl) {
+    return this.post("/api/share/create", { path, ttl });
+  },
+  shareList(path) {
+    return this.get("/api/share/list?path=" + encodeURIComponent(path));
+  },
+  shareRevoke(id) {
+    return this.post("/api/share/revoke", { id });
   },
   mediaUrl(item) {
     if (!item || typeof item !== "object" || !item.path) throw new Error("mediaUrl 需要文件条目");
     if (item.modifyTime == null || item.size == null) throw new Error(`mediaUrl 缺少版本信息: ${item.path}`);
-    return `/api/media?path=${encodeURIComponent(item.path)}&v=${encodeURIComponent(`${item.modifyTime}-${item.size}`)}`;
+    return shareApiUrl(`/api/media?path=${encodeURIComponent(item.path)}&v=${encodeURIComponent(`${item.modifyTime}-${item.size}`)}`);
   },
   thumbnailUrl(path, version) {
-    return `/api/thumbnail?path=${encodeURIComponent(path)}&v=${encodeURIComponent(version)}`;
+    return shareApiUrl(`/api/thumbnail?path=${encodeURIComponent(path)}&v=${encodeURIComponent(version)}`);
   },
   previewUrl(path) {
-    return `/api/preview?path=${encodeURIComponent(path)}`;
+    return shareApiUrl(`/api/preview?path=${encodeURIComponent(path)}`);
   },
   browseUrl(path) {
     if (!path) throw new Error("browseUrl 需要路径");
     const norm = String(path).replace(/\\/g, "/");
     const rel = norm.replace(/^\/+/, "");
-    return "/api/browse/" + rel.split("/").map(encodeURIComponent).join("/");
+    return shareApiUrl("/api/browse/" + rel.split("/").map(encodeURIComponent).join("/"));
   },
   preview(path) {
     return this.get(this.previewUrl(path));
@@ -234,8 +250,15 @@ function joinPath(base, name) {
   return `${b.replace(/\/$/, "")}/${name}`;
 }
 
+function shareRoot() {
+  if (!window.FMShare || !window.FMShare.root) return "";
+  return normalizeFsPath(window.FMShare.root);
+}
+
 function parentPath(path) {
   const p = normalizeFsPath(path);
+  const root = shareRoot();
+  if (root && p === root) return root;
   if (p === "/") return "/";
   const dm = p.match(/^([A-Z]:)(?:\/(.*))?$/);
   if (dm) {
@@ -246,7 +269,9 @@ function parentPath(path) {
   }
   const parts = p.split("/").filter(Boolean);
   parts.pop();
-  return parts.length ? `/${parts.join("/")}` : "/";
+  const parent = parts.length ? `/${parts.join("/")}` : "/";
+  if (root && parent !== root && !pathIsUnder(parent, root)) return root;
+  return parent;
 }
 
 function pathBaseName(path) {
@@ -257,12 +282,15 @@ function pathBaseName(path) {
 }
 
 function pathChain(path) {
+  const stop = shareRoot();
   const chain = [];
   let cur = normalizeFsPath(path);
   while (true) {
     chain.unshift(cur);
-    if (cur === "/") break;
-    cur = parentPath(cur);
+    if (stop ? cur === stop : cur === "/") break;
+    const next = parentPath(cur);
+    if (next === cur) break;
+    cur = next;
   }
   return chain;
 }

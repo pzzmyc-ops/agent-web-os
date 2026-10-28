@@ -205,7 +205,7 @@ function openExplorer(startPath = "/") {
   function updateNavButtons() {
     btnBack.classList.toggle("disable", state.histIndex <= 0);
     btnForward.classList.toggle("disable", state.histIndex >= state.history.length - 1);
-    btnUp.classList.toggle("disable", state.path === "/");
+    btnUp.classList.toggle("disable", normalizeFsPath(state.path) === (shareRoot() || "/"));
     root.querySelectorAll(".list-type").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.act === `view-${state.view}`);
     });
@@ -277,7 +277,9 @@ function openExplorer(startPath = "/") {
   }
 
   function renderTree() {
-    treeEl.innerHTML = renderTreeRoot("/", HOME_NAME, HOME_ICON);
+    const root = shareRoot();
+    if (root) treeEl.innerHTML = renderTreeRoot(root, window.FMShare.name || pathBaseName(root), FOLDER_ICON);
+    else treeEl.innerHTML = renderTreeRoot("/", HOME_NAME, HOME_ICON);
   }
 
   function renderTreeNode(folder, level) {
@@ -362,6 +364,8 @@ function openExplorer(startPath = "/") {
 
   async function load(path, pushHist = true, skipSync = false) {
     const target = normalizePath(path);
+    const root = shareRoot();
+    if (root && target !== root && !pathIsUnder(target, root)) throw new Error("路径超出分享范围");
     state.treeChildren.delete(target);
     const res = await API.list(target);
     const from = state.path;
@@ -788,6 +792,10 @@ function openExplorer(startPath = "/") {
       }
       if (name === "download") {
         if (!items.length) throw new Error("请选择要下载的项目");
+        if (window.FMShare) {
+          await shareDownload(items);
+          return;
+        }
         await Downloader.download(items);
         return;
       }
@@ -864,11 +872,249 @@ function openExplorer(startPath = "/") {
     }
   }
 
+  const SHARE_TTLS = [
+    ["7d", "7天"],
+    ["1m", "1个月"],
+    ["3m", "3个月"],
+    ["12m", "12个月"],
+    ["forever", "永久"],
+  ];
+
+  function shareLabel(ttl) {
+    const found = SHARE_TTLS.find((row) => row[0] === ttl);
+    return found ? found[1] : ttl;
+  }
+
+  function shareWhen(item) {
+    if (item.status === "expired") return "已过期";
+    if (item.expiresAt == null) return "永久";
+    const d = new Date(item.expiresAt * 1000);
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + " 到期";
+  }
+
+  async function shareFolder(item) {
+    const mask = document.getElementById("modal-mask");
+    const modal = mask.querySelector(".modal");
+    const cancel = mask.querySelector('[data-act="cancel"]');
+    const okBtn = mask.querySelector('[data-act="ok"]');
+    const body = mask.querySelector(".modal-body");
+    modal.classList.add("modal-wide");
+    cancel.style.display = "none";
+    okBtn.textContent = "关闭";
+    mask.querySelector(".modal-title").textContent = "分享";
+    const close = () => {
+      mask.classList.add("hidden");
+      modal.classList.remove("modal-wide");
+      cancel.style.display = "";
+      okBtn.textContent = "确定";
+      okBtn.onclick = null;
+    };
+    okBtn.onclick = close;
+    body.textContent = "";
+
+    const heading = document.createElement("div");
+    heading.className = "share-folder";
+    heading.textContent = item.name;
+    const hint = document.createElement("div");
+    hint.className = "share-hint";
+    hint.textContent = "对方只能查看、预览和下载这个文件夹里的内容。";
+    const createRow = document.createElement("div");
+    createRow.className = "share-create";
+    const select = document.createElement("select");
+    SHARE_TTLS.forEach((row) => {
+      const opt = document.createElement("option");
+      opt.value = row[0];
+      opt.textContent = row[1];
+      select.appendChild(opt);
+    });
+    const gen = document.createElement("button");
+    gen.type = "button";
+    gen.className = "btn btn-primary";
+    gen.textContent = "生成链接";
+    createRow.appendChild(select);
+    createRow.appendChild(gen);
+
+    const result = document.createElement("div");
+    result.className = "share-result";
+    result.hidden = true;
+    const linkInput = document.createElement("input");
+    linkInput.readOnly = true;
+    linkInput.spellcheck = false;
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "btn";
+    copyBtn.textContent = "复制链接";
+    const apiBox = document.createElement("div");
+    apiBox.className = "share-api";
+    result.appendChild(linkInput);
+    result.appendChild(copyBtn);
+    result.appendChild(apiBox);
+
+    const issued = document.createElement("div");
+    issued.className = "share-issued";
+    issued.textContent = "已发出的链接";
+    const listBox = document.createElement("div");
+    listBox.className = "share-list";
+
+    body.appendChild(heading);
+    body.appendChild(hint);
+    body.appendChild(createRow);
+    body.appendChild(result);
+    body.appendChild(issued);
+    body.appendChild(listBox);
+    mask.classList.remove("hidden");
+
+    function drawList(rows) {
+      listBox.textContent = "";
+      if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "share-empty";
+        empty.textContent = "还没有分享";
+        listBox.appendChild(empty);
+        return;
+      }
+      rows.forEach((row) => {
+        const line = document.createElement("div");
+        line.className = "share-row";
+        const text = document.createElement("div");
+        text.textContent = shareLabel(row.ttl) + " · " + shareWhen(row);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = row.status === "expired" ? "移除" : "作废";
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            await API.shareRevoke(row.id);
+            await reload();
+          } catch (err) {
+            toast(err.message || String(err));
+            btn.disabled = false;
+          }
+        };
+        line.appendChild(text);
+        line.appendChild(btn);
+        listBox.appendChild(line);
+      });
+    }
+
+    async function reload() {
+      const res = await API.shareList(item.path);
+      drawList(res.data);
+    }
+
+    function showLink(data) {
+      const url = location.origin + data.urlPath;
+      linkInput.value = url;
+      result.hidden = false;
+      apiBox.textContent = [
+        "链接只显示这一次，关闭后不能再查看，只能作废。",
+        "程序访问时，path 留空表示这个文件夹，也可以写文件夹里的相对路径或完整路径。",
+        "GET " + url + "/api/list?path=",
+        "GET " + url + "/api/download?path=",
+        "GET " + url + "/api/preview?path=",
+      ].join("\n");
+      linkInput.focus();
+      linkInput.select();
+    }
+
+    copyBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(linkInput.value);
+        toast("已复制链接");
+      } catch (err) {
+        toast(err.message || String(err));
+      }
+    };
+    gen.onclick = async () => {
+      gen.disabled = true;
+      try {
+        const res = await API.shareCreate(item.path, select.value);
+        showLink(res.data);
+        await reload();
+      } catch (err) {
+        toast(err.message || String(err));
+      } finally {
+        gen.disabled = false;
+      }
+    };
+    try {
+      await reload();
+    } catch (err) {
+      listBox.textContent = err.message || String(err);
+    }
+  }
+
+  async function shareDownload(items) {
+    if (items.length === 1) {
+      const link = document.createElement("a");
+      link.href = API.downloadUrl(items[0].path);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return;
+    }
+    const res = await fetch("/s/" + encodeURIComponent(window.FMShare.token) + "/api/downloadZip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths: items.map((it) => it.path) }),
+    });
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const data = await res.json();
+      throw new Error(typeof data.data === "string" ? data.data : "下载失败");
+    }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "download.zip";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function showContextMenu(x, y, items) {
     const menu = document.getElementById("ctx-menu");
     items = items || [];
     let buttons = [];
-    if (!items.length) {
+    if (window.FMShare) {
+      if (!items.length) {
+        buttons = [
+          ["刷新", () => action("refresh")],
+          ["-", null],
+          ["图标视图", () => action("view-icon")],
+          ["列表视图", () => action("view-list")],
+        ];
+      } else if (items.length === 1) {
+        buttons.push(["打开", () => openItem(items[0])]);
+        if (items[0].type === "file") {
+          const apps = kodApp.listByExt(items[0].ext);
+          if (apps.length) {
+            buttons.push(["-", null]);
+            apps.forEach((app) => {
+              buttons.push([`用${app.title}打开`, () => openFile(items[0], app.name)]);
+            });
+          }
+        }
+        buttons.push(
+          ["-", null],
+          ["下载", () => action("download", items)],
+          ["复制路径", () => action("copypath", items)],
+          ["-", null],
+          ["属性", () => action("props", items)],
+        );
+      } else {
+        buttons = [
+          ["下载", () => action("download", items)],
+          ["复制路径", () => action("copypath", items)],
+          ["-", null],
+          ["属性", () => action("props", items)],
+        ];
+      }
+    } else if (!items.length) {
       buttons = [
         ["刷新", () => action("refresh")],
         ["粘贴", () => action("paste")],
@@ -886,6 +1132,7 @@ function openExplorer(startPath = "/") {
       buttons.push(["打开", () => openItem(items[0])]);
       if (items[0].type === "folder") {
         buttons.push(["在此处打开终端", () => FMTerminal.open(items[0].path)]);
+        buttons.push(["分享", () => shareFolder(items[0])]);
       }
       if (items[0].type === "file") {
         const apps = kodApp.listByExt(items[0].ext);
@@ -1315,6 +1562,11 @@ function openExplorer(startPath = "/") {
   });
   content.addEventListener("dragleave", () => content.classList.remove("dragover"));
   content.addEventListener("drop", (e) => {
+    if (window.FMShare) {
+      e.preventDefault();
+      content.classList.remove("dragover");
+      return;
+    }
     const hit = hitItem(e);
     if (hit && hit.item.type === "folder" && fmDragCanDrop(e, hit.item.path)) {
       e.preventDefault();
@@ -1336,6 +1588,7 @@ function openExplorer(startPath = "/") {
 
   root.addEventListener("mousedown", () => root.focus());
   root.addEventListener("paste", (e) => {
+    if (window.FMShare) return;
     if (e.target.matches("input, textarea")) return;
     e.preventDefault();
     pasteIntoPath(state.path, e.clipboardData).catch((err) => {
@@ -1353,10 +1606,10 @@ function openExplorer(startPath = "/") {
       e.preventDefault();
       action("up").catch(() => {});
     }
-    if (e.key === "Delete") action("delete").catch(() => {});
-    if (e.key === "F2") action("rename").catch(() => {});
-    if (e.ctrlKey && e.key.toLowerCase() === "c") action("copy").catch(() => {});
-    if (e.ctrlKey && e.key.toLowerCase() === "x") action("cut").catch(() => {});
+    if (!window.FMShare && e.key === "Delete") action("delete").catch(() => {});
+    if (!window.FMShare && e.key === "F2") action("rename").catch(() => {});
+    if (!window.FMShare && e.ctrlKey && e.key.toLowerCase() === "c") action("copy").catch(() => {});
+    if (!window.FMShare && e.ctrlKey && e.key.toLowerCase() === "x") action("cut").catch(() => {});
     if (e.ctrlKey && e.key.toLowerCase() === "a") {
       state.items.forEach((it) => state.selected.add(it.path));
       updateSelectionUI();

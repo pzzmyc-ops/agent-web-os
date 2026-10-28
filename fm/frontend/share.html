@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="referrer" content="no-referrer" />
+  <title>文件管理器</title>
+  <link rel="stylesheet" href="/css/app.css?v=64" />
+  <link rel="stylesheet" href="/assets/kod/style/lib/font-icon/style.css" />
+</head>
+<body>
+  <div id="desktop">
+    <div id="desktop-icons"></div>
+    <div id="window-layer"></div>
+    <div id="taskbar">
+      <div id="taskbar-apps"></div>
+      <div id="taskbar-clock"></div>
+    </div>
+  </div>
+  <div id="ctx-menu" class="ctx-menu hidden"></div>
+  <div id="modal-mask" class="modal-mask hidden">
+    <div class="modal">
+      <div class="modal-title"></div>
+      <div class="modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-act="cancel">取消</button>
+        <button type="button" class="btn btn-primary" data-act="ok">确定</button>
+      </div>
+    </div>
+  </div>
+  <script src="/js/api.js?v=60"></script>
+  <script src="/js/loader.js?v=44"></script>
+  <script src="/js/wm.js?v=51"></script>
+  <script src="/js/kodApp.js?v=45"></script>
+  <script src="/js/desktop-os.js?v=54"></script>
+  <script src="/js/desktop-state.js?v=2"></script>
+  <script src="/js/apps/aceEditor.js?v=47"></script>
+  <script src="/js/apps/imageViewer.js?v=48"></script>
+  <script src="/js/apps/audioPlayer.js?v=45"></script>
+  <script src="/js/apps/videoPlayer.js?v=46"></script>
+  <script src="/js/apps/htmlViewer.js?v=2"></script>
+  <script src="/js/explorer.js?v=57"></script>
+  <script>
+    (function () {
+      const parts = location.pathname.split("/").filter(Boolean);
+      if (parts[0] !== "s" || !parts[1]) {
+        document.body.textContent = "链接无效或已过期";
+        return;
+      }
+      const token = parts[1];
+
+      function pad(n) {
+        return String(n).padStart(2, "0");
+      }
+
+      function openSharedFolder() {
+        const root = normalizeFsPath(window.FMShare.root);
+        let found = null;
+        window.FMExplorerViews.forEach((view) => {
+          if (found) return;
+          if (normalizeFsPath(view.getPath()) !== root) return;
+          const opened = WM.windows.get(view.winId);
+          if (opened) found = opened;
+        });
+        if (found) {
+          if (found.minimized) WM.restore(found.id);
+          WM.focus(found.id);
+          return;
+        }
+        const win = openExplorer(window.FMShare.root);
+        WM.toggleMaximize(win.id);
+      }
+
+      function addHomeIcon() {
+        const box = document.getElementById("desktop-icons");
+        const home = document.createElement("div");
+        home.className = "desk-icon desk-home";
+        home.dataset.special = "home";
+        home.style.left = "0px";
+        home.style.top = "0px";
+        const ico = document.createElement("div");
+        ico.className = "ico";
+        ico.style.backgroundImage = "url(\"" + FOLDER_ICON + "\")";
+        const name = document.createElement("div");
+        name.className = "name";
+        name.textContent = "我的文件";
+        home.appendChild(ico);
+        home.appendChild(name);
+        box.appendChild(home);
+        home.addEventListener("click", () => {
+          home.classList.add("selected");
+        });
+        home.addEventListener("dblclick", (e) => {
+          e.preventDefault();
+          openSharedFolder();
+        });
+        document.getElementById("desktop").addEventListener("contextmenu", (e) => {
+          if (e.target.closest(".win, #taskbar, .ctx-menu, .modal-mask")) return;
+          e.preventDefault();
+          const menu = document.getElementById("ctx-menu");
+          menu.textContent = "";
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = "打开我的文件";
+          btn.onclick = () => {
+            menu.classList.add("hidden");
+            openSharedFolder();
+          };
+          menu.appendChild(btn);
+          menu.classList.remove("hidden");
+          const rect = menu.getBoundingClientRect();
+          menu.style.left = Math.min(e.clientX, window.innerWidth - rect.width - 4) + "px";
+          menu.style.top = Math.min(e.clientY, window.innerHeight - rect.height - 4) + "px";
+        });
+        document.addEventListener("click", (e) => {
+          if (e.target.closest(".ctx-menu, .desk-icon")) return;
+          document.getElementById("ctx-menu").classList.add("hidden");
+          home.classList.remove("selected");
+        });
+      }
+
+      function expiryText(meta) {
+        if (meta.expiresAt == null) return "永久有效";
+        const d = new Date(meta.expiresAt * 1000);
+        return "有效至 " + d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+      }
+
+      fetch("/s/" + encodeURIComponent(token) + "/api/meta").then(async (res) => {
+        const body = await res.json();
+        if (!res.ok || !body.code) {
+          throw new Error(typeof body.data === "string" ? body.data : (body.detail || "链接无效或已过期"));
+        }
+        window.FMShare = { token: token, root: body.data.path, name: body.data.name };
+        document.title = body.data.name;
+        document.getElementById("taskbar-clock").textContent = expiryText(body.data);
+        WM.init();
+        addHomeIcon();
+        openSharedFolder();
+      }).catch((err) => {
+        document.body.textContent = err.message || String(err);
+      });
+    })();
+  </script>
+</body>
+</html>

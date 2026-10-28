@@ -61,6 +61,7 @@
       </div>
     `;
 
+    if (window.FMShare) root.querySelector('[data-act="remove"]').remove();
     const stage = root.querySelector(".image-viewer-stage");
     const img = root.querySelector(".image-viewer-img");
     const zoomEl = root.querySelector(".image-viewer-zoom");

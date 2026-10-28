@@ -418,6 +418,22 @@ button,input{font-family:inherit}
 }
 .modal-body textarea{height:220px;padding:10px;resize:vertical;font-family:Consolas,"Courier New",monospace}
 .modal-actions{padding:12px 16px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid #eee}
+.modal.modal-wide{width:560px;max-width:calc(100vw - 32px)}
+.modal.modal-wide .modal-body{max-height:70vh;overflow:auto}
+.share-folder{font-weight:600;margin-bottom:8px;word-break:break-all}
+.share-hint{font-size:12px;color:#666;margin-bottom:12px}
+.share-create{display:flex;gap:8px}
+.share-create select{flex:1;height:34px;border:1px solid #d0d5dd;border-radius:4px;padding:0 8px;background:#fff}
+.share-create .btn{height:34px;padding:0 12px;border:1px solid #d0d5dd;border-radius:4px;cursor:pointer}
+.share-result{margin-top:12px}
+.share-result[hidden]{display:none}
+.share-result .btn{margin-top:8px;height:30px;padding:0 10px;border:1px solid #d0d5dd;border-radius:4px;background:#fff;cursor:pointer}
+.share-api{margin-top:8px;padding:8px;background:#f6f7f9;border-radius:6px;font-size:12px;line-height:1.6;color:#444;white-space:pre-wrap;word-break:break-all}
+.share-issued{margin-top:16px;font-size:13px;font-weight:600}
+.share-list{margin-top:4px}
+.share-empty{color:#888;font-size:12px;padding:8px 0}
+.share-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid #eee;font-size:12px}
+.share-row button{height:26px;padding:0 8px;border:1px solid #d0d5dd;border-radius:4px;background:#fff;cursor:pointer}
 .preview-wrap{height:100%;display:flex;flex-direction:column;min-height:0}
 .preview-toolbar{padding:6px 8px;background:#f5f6f8;border-bottom:1px solid #e2e5ea;display:flex;align-items:center;gap:6px;flex-shrink:0}
 .preview-toolbar .btn{

@@ -24,6 +24,7 @@ from .desktop import router as desktop_router
 from .fileop import router as fileop_router
 from .terminal import router as terminal_router
 from .onlyoffice import router as onlyoffice_router
+from .share import router as share_router
 from .transfer import router as transfer_router
 
 _NO_CACHE = {
@@ -56,6 +57,8 @@ _NO_CACHE_PREFIXES = (
     "/api/terminal",
     "/api/browser",
     "/api/onlyoffice",
+    "/api/share",
+    "/s",
 )
 
 _FM = Path(__file__).resolve().parent.parent  # mafagent/fm
@@ -87,6 +90,7 @@ def install_fm(app: FastAPI) -> None:
     app.include_router(fileop_router)
     app.include_router(terminal_router)
     app.include_router(browser_router)
+    app.include_router(share_router)
     app.mount("/assets/kod", StaticFiles(directory=str(ASSETS_STATIC)), name="fm-kod")
     app.mount("/assets/plugins", StaticFiles(directory=str(ASSETS_PLUGINS)), name="fm-plugins")
 

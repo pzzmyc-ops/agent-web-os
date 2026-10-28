@@ -31,6 +31,7 @@ const DesktopState = {
 
   async push() {
     clearTimeout(this._timer);
+    if (location.pathname === "/s" || location.pathname.startsWith("/s/")) return;
     await DesktopLink.ready;
     if (DesktopLink.evicted) return;
     const res = await fetch("/api/desktop/state", {

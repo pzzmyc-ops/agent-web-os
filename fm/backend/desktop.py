@@ -28,6 +28,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -242,6 +243,17 @@ def exec_on_desktop(desktop_id: str, op: str, params: dict) -> dict:
     return fut.result()
 
 
+def _is_share_page(path: str) -> bool:
+    return path == "/s" or path.startswith("/s/")
+
+
+def _referer_path(websocket: WebSocket) -> str:
+    raw = websocket.headers.get("referer") or ""
+    if not raw:
+        return ""
+    return urlparse(raw).path or ""
+
+
 def _online() -> list[dict]:
     return [
         {"desktopId": c.desktop_id, "connectedAt": c.connected_at}
@@ -292,6 +304,13 @@ async def desktop_control(websocket: WebSocket):
 @router.websocket("/screen")
 async def desktop_screen(websocket: WebSocket, desktopId: str = ""):
     """浏览器里的桌面页报到,并在这条连接上执行下发的命令。"""
+    if _is_share_page(_referer_path(websocket)):
+        await websocket.accept()
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            return
     desktop_id = str(desktopId or "").strip()
     if not desktop_id:
         await websocket.close(code=1008)

@@ -153,7 +153,7 @@ _FM_ENVELOPE_PREFIXES = ("/api/list", "/api/info", "/api/mkdir", "/api/mkfile",
                          "/api/media", "/api/thumbnail", "/api/preview", "/api/save", "/api/search",
                          "/api/zip", "/api/unzip", "/api/root",
                          "/api/transfer", "/api/fileop", "/api/onlyoffice",
-                         "/api/embedded-apps")
+                         "/api/embedded-apps", "/api/share")
 
 
 @asynccontextmanager

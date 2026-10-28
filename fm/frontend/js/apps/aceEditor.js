@@ -202,6 +202,9 @@
       <a href="javascript:;" data-set="hardTab">Tab 缩进</a>
     `;
 
+    if (window.FMShare) {
+      root.querySelectorAll('[data-act="save"], [data-act="saveAll"]').forEach((el) => el.remove());
+    }
     const aceEl = root.querySelector(".ace-editor-content");
     const editor = aceLib.edit(aceEl);
     editor.setTheme("ace/theme/tomorrow");
@@ -707,6 +710,7 @@
   }
 
   async function saveActive(state) {
+    if (window.FMShare) throw new Error("分享链接不能修改文件");
     const tab = getActive(state);
     if (!tab) throw new Error("没有打开的文件");
     const content = state.editor.getValue();

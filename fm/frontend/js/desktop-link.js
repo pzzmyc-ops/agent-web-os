@@ -35,6 +35,7 @@ const DesktopLink = {
   },
 
   connect() {
+    if (location.pathname === "/s" || location.pathname.startsWith("/s/")) return;
     if (this.evicted) return;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;

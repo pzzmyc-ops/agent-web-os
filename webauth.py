@@ -27,6 +27,11 @@ _PUBLIC_PREFIXES = (
     "/comfyui",
     "/remote",
     "/onlyoffice-ds",
+    "/s",
+    "/css",
+    "/js",
+    "/assets",
+    "/images",
 )
 
 _LOGIN_PAGE = Path(__file__).resolve().parent / "fm" / "frontend" / "login.html"
