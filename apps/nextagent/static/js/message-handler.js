@@ -1,6 +1,6 @@
 import { state, activeConv, getConvState, taskToConv, convCache, taskMirror, taskLastSeq } from "./state.js";
-import { syncComposerForConv, findChatInflightTask } from "./composer.js";
-import { resumeAllInflightTasks, requestTaskResume, resolvePendingAck, rejectPendingAck, discardPendingAck, pendingAckRetryCount, flushOutbox, rootMessageId } from "./ws.js";
+import { syncComposerForConv, findChatInflightTask, isInflightStatus } from "./composer.js";
+import { sendWsMsg, resumeAllInflightTasks, requestTaskResume, resolvePendingAck, rejectPendingAck, discardPendingAck, pendingAckRetryCount, flushOutbox, rootMessageId } from "./ws.js";
 import { resolveFileUrl } from "./asset-url.js";
 import { messageBus } from "./message-bus.js";
 import { applySessionUi } from "./session-ui.js";
@@ -8,20 +8,7 @@ import { applyQueueState } from "./queue-panel.js";
 import {
   addSystemMsg,
   addUserBubble,
-  addAiBubble,
-  setSendBtnSend,
-  setSendBtnStop,
   syncSendButton,
-  setBubbleContent,
-  appendBubbleContent,
-  setThinkContent,
-  appendThinkContent,
-  setThinkDone,
-  hideThinkBlock,
-  syncCurrentPageThinkToggle,
-  scrollToBottom,
-  shouldAutoFollowScroll,
-  refreshAiBubbleCopyState,
   clearThreadSendFailures,
   getChatAreaEl,
 } from "./chat-ui.js";
@@ -46,115 +33,20 @@ import { showPlanReviewForCall, applyTodoList, restorePlanReviewFromBlocks, appl
 import {
   loadHistory,
   reloadThreadHistory,
-  applyHistoryEvents,
   applyPendingHistoryForAllConvs,
   commitHistoryRender,
 } from "./history.js";
 import { renderConversationList, updateConversationTitle, initFirstConversation } from "./conversations.js";
 import { saveConversationList, saveFolderList, saveCurrentConvId } from "./cache.js";
 import { syncAssetsThread, handleAssetEvent } from "./assets.js";
-import { upsertFromMediaReady, upsertNode } from "./asset-catalog.js";
-import { openWindow, focusWindow, getWindow, closeWindow } from "./modules/window-manager/index.js";
-import { formatContent } from "./format.js";
+import { upsertNode } from "./asset-catalog.js";
 import { setUserBubbleCheckpoint } from "./checkpoints.js";
-var _remoteToolOverlay = null;
-var _beforeUnloadHandler = null;
-var _REMOTE_TOOL_NAMES = [];
-
-function _showRemoteToolOverlay(toolName) {
-  void toolName;
-  if (_remoteToolOverlay) return;
-  var overlay = document.createElement("div");
-  overlay.id = "remote-tool-overlay";
-  overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.35);z-index:99999;display:flex;align-items:center;justify-content:center;pointer-events:auto;";
-  var box = document.createElement("div");
-  box.style.cssText = "background:var(--bg-surface,#23232b);border-radius:12px;padding:28px 36px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.3);max-width:360px;";
-  var spinner = document.createElement("div");
-  spinner.style.cssText = "width:36px;height:36px;border:3px solid var(--text-muted,#888);border-top-color:var(--accent-color,#6c8cff);border-radius:50%;animation:_rtSpin 0.8s linear infinite;margin:0 auto 16px;";
-  var style = document.createElement("style");
-  style.textContent = "@keyframes _rtSpin{to{transform:rotate(360deg)}}";
-  box.appendChild(style);
-  box.appendChild(spinner);
-  var label = document.createElement("div");
-  label.style.cssText = "color:var(--text-primary,#fff);font-size:15px;font-weight:600;margin-bottom:6px;";
-  label.textContent = "任务执行中";
-  box.appendChild(label);
-  var sub = document.createElement("div");
-  sub.style.cssText = "color:var(--text-muted,#aaa);font-size:13px;";
-  sub.textContent = "请耐心等待，不要关闭或刷新页面";
-  box.appendChild(sub);
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  _remoteToolOverlay = overlay;
-  if (!_beforeUnloadHandler) {
-    _beforeUnloadHandler = function (e) { e.preventDefault(); e.returnValue = ""; };
-    window.addEventListener("beforeunload", _beforeUnloadHandler);
-  }
-}
-
-function _hideRemoteToolOverlay() {
-  _doHideOverlay();
-}
-
-function _doHideOverlay() {
-  if (_remoteToolOverlay) {
-    _remoteToolOverlay.remove();
-    _remoteToolOverlay = null;
-  }
-  if (_beforeUnloadHandler) {
-    window.removeEventListener("beforeunload", _beforeUnloadHandler);
-    _beforeUnloadHandler = null;
-  }
-}
-
-function _forceHideOverlay() {
-  _doHideOverlay();
-}
 
 var _pendingReconnect = [];
 var _pendingReconnectTimer = null;
 var MAX_PENDING_RECONNECT = 50;
 var _lastTasksSnapshot = [];
 var _skillCatalogRefreshTimer = null;
-var REMOTE_STOP_NOTICE_WINDOW_ID = "remote-stop-notice-window";
-
-function _escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
-  });
-}
-
-function _showRemoteStopNotice() {
-  var wid = REMOTE_STOP_NOTICE_WINDOW_ID;
-  var html = '<div style="padding:4px 0 12px;line-height:1.55;color:var(--text-muted,#ccc);font-size:13px">';
-  html += "本对话流已停止。若当时仍有远端任务在运行，请自行在目标环境检查或停止。";
-  html += '</div><div style="text-align:right"><button type="button" class="cog-btn wm-remote-stop-ok">知道了</button></div>';
-  function bindOk(body) {
-    var btn = body.querySelector(".wm-remote-stop-ok");
-    if (btn) btn.onclick = function () { closeWindow(wid); };
-  }
-  var existing = getWindow(wid);
-  if (existing) {
-    var body = existing.el.querySelector(".wm-body");
-    if (body) {
-      body.innerHTML = html;
-      bindOk(body);
-    }
-    focusWindow(wid);
-    return;
-  }
-  openWindow(wid, {
-    title: "已停止",
-    width: 440,
-    height: 240,
-    minWidth: 320,
-    minHeight: 180,
-    onMount: function (body) {
-      body.innerHTML = html;
-      bindOk(body);
-    }
-  });
-}
 
 function _scheduleSkillCatalogRefresh() {
   if (!state.api || typeof state.api.fetchSkills !== "function") return;
@@ -210,7 +102,33 @@ function _replayPendingReconnectForTask(taskId) {
   matched.forEach(function (m) { handleMessage(m); });
 }
 
-var RETAINED_STREAM_WINDOW_MS = 5000;
+var SYNC_PROBE_INTERVAL_MS = 3000;
+
+/** 问后端要一份「谁在跑」的权威名单。 */
+function requestTasksSnapshot() {
+  sendWsMsg("sync_state", { threadId: state.currentConversationId || "" });
+}
+
+/** 前端只要还认为有回合在跑,就定期向后端要一次名单。
+ *
+ *  turn_complete 丢了、连接闪断、别的窗口发起的回合,都在下一次探测里自愈:
+ *  后端说没有了,reconcileTasksSnapshot 就把按钮和等待提示收回去,探测随之停下。
+ */
+function startSyncProbe() {
+  setInterval(function () {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    for (var tid in taskMirror) {
+      if (!Object.prototype.hasOwnProperty.call(taskMirror, tid)) continue;
+      var row = taskMirror[tid];
+      if (row && isInflightStatus(row.status)) {
+        requestTasksSnapshot();
+        return;
+      }
+    }
+  }, SYNC_PROBE_INTERVAL_MS);
+}
+
+startSyncProbe();
 
 function taskIdFromMsg(msg) {
   return (msg.data && msg.data.taskId) || msg.taskId || "";
@@ -233,16 +151,7 @@ function resolveConv(taskId) {
   return getConvState(convId);
 }
 
-function isActive(taskId) {
-  return taskToConv[taskId] === state.currentConversationId;
-}
-
-function _isInflightStatus(status) {
-  var s = String(status || "");
-  return s === "queued" || s === "pending" || s === "running";
-}
-
-function applyTaskSnapshot(task, skipUi) {
+function applyTaskSnapshot(task) {
   if (!task || !task.taskId || !task.threadId) return;
   taskMirror[task.taskId] = task;
   taskToConv[task.taskId] = task.threadId;
@@ -250,54 +159,73 @@ function applyTaskSnapshot(task, skipUi) {
   if (snapSeq > 0) {
     taskLastSeq[task.taskId] = Math.max(taskLastSeq[task.taskId] || 0, snapSeq);
   }
-  if (skipUi) return;
+  if (!isInflightStatus(task.status)) return;
   var cs = getConvState(task.threadId);
-  var status = String(task.status || "");
-  if (_isInflightStatus(status)) {
-    if (!cs.currentTaskId || status === "running") cs.currentTaskId = task.taskId;
-  }
+  cs.currentTaskId = task.taskId;
+  cs.liveTaskId = task.taskId;
 }
 
-function reconcileTasksSnapshot(tasks, skipUi) {
+/** 一条回合结束了:把这一轮的临时显示态收干净。
+ *
+ *  唯一的收尾入口 —— turn_complete 触发和后端名单对账都走它,重复调用无副作用。
+ *  它不碰 taskMirror:那张表是后端名单的镜像,由 reconcileTasksSnapshot 管。
+ */
+function finishThreadTurn(cs) {
+  if (!cs) return;
+  removeTurnWaiting(cs);
+  cs.currentStreamBubble = null;
+  cs.pendingSend = false;
+  cs.outboxFlushing = false;
+  cs.editingUserMessageIndex = null;
+  cs.thinkStartTime = null;
+  cs.thinkEndTime = null;
+  cs.liveTaskId = "";
+  syncComposerForConv(cs, "turn_finished");
+}
+
+/** 后端名单即权威:名单里没有的镜像行 = 这条回合已经结束。
+ *
+ *  发送键、等待提示、流式指针全从这里收敛,前端不再自己判断回合结束 ——
+ *  所以丢一帧 turn_complete 不会卡住,下一次推送或探测就把状态纠回来。
+ */
+function reconcileTasksSnapshot(tasks) {
   tasks = tasks || [];
   _lastTasksSnapshot = tasks.slice();
-  var inflightIds = {};
-  var inflightByThread = {};
 
+  var live = {};
+  var busyConv = {};
   for (var i = 0; i < tasks.length; i++) {
     var task = tasks[i];
     if (!task || !task.taskId || !task.threadId) continue;
-    if (_isInflightStatus(task.status)) {
-      inflightIds[task.taskId] = true;
-      inflightByThread[task.threadId] = true;
-    }
+    if (!isInflightStatus(task.status)) continue;
+    live[task.taskId] = task;
+    busyConv[task.threadId] = true;
   }
 
   for (var tid in taskMirror) {
     if (!Object.prototype.hasOwnProperty.call(taskMirror, tid)) continue;
-    if (inflightIds[tid]) continue;
+    if (live[tid]) continue;
+    var convId = taskToConv[tid];
     delete taskMirror[tid];
     delete taskToConv[tid];
+    if (convId && !busyConv[convId]) finishThreadTurn(convCache[convId]);
   }
 
   for (var j = 0; j < tasks.length; j++) {
-    applyTaskSnapshot(tasks[j], skipUi);
+    applyTaskSnapshot(tasks[j]);
   }
 
-  if (!skipUi) {
-    for (var convId in convCache) {
-      if (!Object.prototype.hasOwnProperty.call(convCache, convId)) continue;
-      var cs = convCache[convId];
-      syncComposerForConv(cs, "reconcile_tasks_snapshot");
-    }
-    syncSendButton();
+  for (var convKey in convCache) {
+    if (!Object.prototype.hasOwnProperty.call(convCache, convKey)) continue;
+    syncComposerForConv(convCache[convKey], "reconcile_tasks_snapshot");
   }
+  syncSendButton();
 }
 
 function finishBootstrap() {
   state.bootstrapPhase = "ready";
   state.bootstrapping = false;
-  reconcileTasksSnapshot(_lastTasksSnapshot, false);
+  reconcileTasksSnapshot(_lastTasksSnapshot);
   applyPendingHistoryForAllConvs().then(function () {
     replayPendingReconnect();
     resumeAllInflightTasks();
@@ -315,62 +243,6 @@ function handlePong(msg) {
   }
 }
 
-function _clearRetainedStream(cs, taskId) {
-  if (!cs) return;
-  if (!taskId || cs.retainedTaskId === taskId) {
-    if (cs.retainedTaskId) delete taskToConv[cs.retainedTaskId];
-    cs.retainedStreamBubble = null;
-    cs.retainedTaskId = null;
-    cs.retainedUntil = 0;
-    return;
-  }
-  if (cs.retainedTaskId && cs.retainedTaskId !== taskId && Date.now() >= (cs.retainedUntil || 0)) {
-    delete taskToConv[cs.retainedTaskId];
-    cs.retainedStreamBubble = null;
-    cs.retainedTaskId = null;
-    cs.retainedUntil = 0;
-  }
-}
-
-function _applyStreamTaskError(cs, taskId, errText) {
-  var text = errText != null ? String(errText) : "";
-  if (taskId && taskMirror[taskId]) taskMirror[taskId].status = "failed";
-  var b = upsertBlock(cs, { blockId: "error:" + taskId, kind: "text", text: text });
-  if (b && b.bubbleEl) b.bubbleEl.classList.add("error");
-  _cleanupStream(cs, taskId);
-}
-
-function _cleanupStream(cs, taskId, opts) {
-  _hideRemoteToolOverlay();
-  removeTurnWaiting(cs);
-  var wasActive = isActive(taskId);
-  var interrupted = !!(opts && opts.interrupted);
-  if (taskId && taskMirror[taskId]) {
-    if (interrupted) {
-      taskMirror[taskId].status = "cancelled";
-    } else if (taskMirror[taskId].status !== "failed" && taskMirror[taskId].status !== "cancelled") {
-      taskMirror[taskId].status = "completed";
-    }
-  }
-  _clearRetainedStream(cs);
-  cs.retainedStreamBubble = cs.currentStreamBubble;
-  cs.retainedTaskId = taskId;
-  cs.retainedUntil = Date.now() + RETAINED_STREAM_WINDOW_MS;
-  cs.currentStreamBubble = null;
-  if (taskId) {
-    delete taskMirror[taskId];
-    delete taskToConv[taskId];
-  }
-  cs.pendingSend = false;
-  cs.outboxFlushing = false;
-  syncComposerForConv(cs, "cleanup_stream");
-  syncSendButton();
-  cs.editingUserMessageIndex = null;
-  cs.thinkStartTime = null;
-  cs.thinkEndTime = null;
-  if (wasActive && !cs.isStreaming) setSendBtnSend();
-}
-
 export function handleMessage(msg) {
   if (msg.type === "online_count") {
     return;
@@ -382,8 +254,7 @@ export function handleMessage(msg) {
   }
 
   if (msg.type === "tasks_snapshot") {
-    var snapTasks = (msg.data && msg.data.tasks) || [];
-    reconcileTasksSnapshot(snapTasks, state.bootstrapPhase !== "ready");
+    reconcileTasksSnapshot((msg.data && msg.data.tasks) || []);
   }
 
   var phase = state.bootstrapPhase;
@@ -421,13 +292,6 @@ export function handleMessage(msg) {
   }
   messageBus.emit(msg.type, msg);
 }
-
-messageBus.on("tasks_snapshot", function () {
-  if (state.bootstrapPhase === "ready") {
-    resumeAllInflightTasks();
-  }
-  syncSendButton();
-});
 
 function _takeSentBubble(cs, messageId) {
   if (!cs || !cs.sentBubbles) return null;
@@ -964,64 +828,48 @@ messageBus.on("block_remove", function (msg) {
   blockRemove(cs, msg.data || {});
 });
 
+/** 回合结束的快捷通知。
+ *
+ *  这里不改「在不在跑」——那是 tasks_snapshot 的事。它只做两件事:立刻去问一次
+ *  权威名单(不用等下一次探测),以及把收尾时该刷的显示顺手刷一下。
+ */
 function _onTurnComplete(msg) {
-  const taskId = msg.data && msg.data.taskId;
-  if (!taskId) return;
-  const cs = resolveConv(taskId);
-  var endThreadId = (msg.data && msg.data.threadId) || taskToConv[taskId] || "";
-  if (!cs) {
-    _addPendingReconnect(msg);
-    return;
-  }
-  if (taskId !== cs.currentTaskId) {
-    delete taskMirror[taskId];
-    delete taskToConv[taskId];
-    syncComposerForConv(cs, "turn_complete_other");
-    syncSendButton();
-    return;
-  }
-  if (!acceptSeq(msg)) return;
-  var hadRemoteOverlay = !!_remoteToolOverlay;
-  _forceHideOverlay();
-  removeTurnWaiting(cs);
-  if (endThreadId) syncAssetsThread(endThreadId);
-  _cleanupStream(cs, taskId, { interrupted: !!(msg.data && msg.data.interrupted) });
-  if (endThreadId) {
-    cs.liveTaskId = "";
-    if (!cs.historyLoaded) cs.historyLoaded = true;
-  }
-  if (msg.data && msg.data.interrupted && hadRemoteOverlay) {
-    _showRemoteStopNotice();
-  }
+  // 先对账再刷新显示:状态收敛不能依赖下面这些副作用是否抛错。
+  requestTasksSnapshot();
+  var d = msg.data || {};
+  var threadId = d.threadId || taskToConv[d.taskId] || "";
+  if (!threadId) return;
+  syncAssetsThread(threadId);
+  var cs = getConvState(threadId);
+  if (!cs.historyLoaded) cs.historyLoaded = true;
 }
+
 messageBus.on("plan_status", function (msg) {
   applyPlanStatus(msg.data || {});
 });
 
 messageBus.on("turn_complete", _onTurnComplete);
-messageBus.on("stream_end", _onTurnComplete);
 
-messageBus.on("stream_error", function (msg) {
-  const taskId = msg.data && msg.data.taskId;
-  if (!taskId) return;
-  const cs = resolveConv(taskId);
-  if (!cs || taskId !== cs.currentTaskId) {
-    _addPendingReconnect(msg);
-    return;
-  }
-  _applyStreamTaskError(cs, taskId, msg.data.errorMessage || "未知错误");
-});
+/** 出错只画一条错误气泡。
+ *
+ *  状态收尾统一交给 tasks_snapshot:出错那一轮结束时后端会收回名单,快照回来
+ *  自然把按钮和等待提示复位。在这里再动一次状态就又成了第二本账。
+ */
+function _showStreamError(msg) {
+  var d = msg.data || {};
+  var threadId = d.threadId || taskToConv[d.taskId] || "";
+  if (!threadId) return;
+  var cs = getConvState(threadId);
+  var b = upsertBlock(cs, {
+    blockId: "error:" + (d.taskId || "unknown"),
+    kind: "text",
+    text: String(d.errorMessage || d.detail || "未知错误"),
+  });
+  if (b && b.bubbleEl) b.bubbleEl.classList.add("error");
+}
 
-messageBus.on("error", function (msg) {
-  const taskId = msg.data && msg.data.taskId;
-  if (!taskId) return;
-  const cs = resolveConv(taskId);
-  if (!cs || taskId !== cs.currentTaskId) {
-    _addPendingReconnect(msg);
-    return;
-  }
-  _applyStreamTaskError(cs, taskId, msg.data.errorMessage || msg.data.detail || "未知错误");
-});
+messageBus.on("stream_error", _showStreamError);
+messageBus.on("error", _showStreamError);
 
 messageBus.on("program_timer", function (msg) {
   var d = msg.data || {};
