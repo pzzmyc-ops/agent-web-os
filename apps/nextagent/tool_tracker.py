@@ -239,7 +239,7 @@ class ToolTracker:
         try:
             parsed = json.loads(raw)
         except Exception:
-            return {"_raw": raw[:400]}
+            return {"_raw": raw[:4000]}
         return parsed if isinstance(parsed, dict) else {"value": parsed}
 
     @staticmethod
@@ -268,6 +268,13 @@ class ToolTracker:
         frag = self._arg_fragment(content)
 
         if call_id and name:
+            known = self._calls.get(call_id)
+            if known is not None:
+                self._current = call_id
+                if frag:
+                    known["args"] += frag
+                    await self._send_input_when_complete(call_id, known)
+                return
             silent_ui = session_log.is_orchestration_tool(name)
             if silent_ui:
                 await self._on_persist()

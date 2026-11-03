@@ -20,7 +20,7 @@ from .files import (
     read_text_or_none,
     sha256_of,
 )
-from .ollama import OllamaEmbedder, OllamaUnavailable
+from .openai_embed import EmbedderUnavailable, OpenAIEmbedder
 from .store import FileRecord, SearchHit, VectorStore
 
 FLUSH_CHUNKS = 64
@@ -46,7 +46,7 @@ class RetrievalService:
         self.workspace = canon_path(cfg.fm_root_dir)
         self.index_dir = canon_path(cfg.index_dir)
         self.db_path = os.path.join(cfg.index_dir, "retrieval.sqlite")
-        self.embedder = OllamaEmbedder(cfg.ollama_url, cfg.embedding_model)
+        self.embedder = OpenAIEmbedder(cfg.embedding_url, cfg.embedding_api_key, cfg.embedding_model)
         self.private_dirs = [canon_path(os.path.join(cfg.fm_root_dir, name)) for name in WORKSPACE_PRIVATE_DIRS]
         self._store: VectorStore | None = None
         self._task: asyncio.Task | None = None
@@ -90,7 +90,7 @@ class RetrievalService:
             "indexExists": files > 0,
             "sources": sources,
             "model": self.embedder.model,
-            "ollamaUrl": self.embedder.url,
+            "embeddingUrl": self.embedder.url,
             "indexedModel": st.get_meta("model") or "",
             "lastBuild": st.get_meta("last_build") or "",
             "workspace": self.workspace,
@@ -319,4 +319,4 @@ def _embed_input(item: IndexableFile, text: str) -> str:
 
 retrieval_service = RetrievalService()
 
-__all__ = ["IndexBusy", "IndexMissing", "OllamaUnavailable", "RetrievalService", "retrieval_service"]
+__all__ = ["EmbedderUnavailable", "IndexBusy", "IndexMissing", "RetrievalService", "retrieval_service"]

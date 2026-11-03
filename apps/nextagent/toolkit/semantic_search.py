@@ -52,7 +52,7 @@ async def semantic_search(query: str, target_directory: str = "", num_results: i
         num_results: 返回块数,默认 10,最多 20。
     """
     from ..retrieval import retrieval_service
-    from ..retrieval.service import IndexMissing, OllamaUnavailable
+    from ..retrieval.service import EmbedderUnavailable, IndexMissing
 
     q = str(query or "").strip()
     if not q:
@@ -63,7 +63,7 @@ async def semantic_search(query: str, target_directory: str = "", num_results: i
     k = min(k, MAX_RESULTS)
     try:
         hits = await retrieval_service.search(q, target_directory=target_directory, top_k=k)
-    except (IndexMissing, OllamaUnavailable, RuntimeError, ValueError) as exc:
+    except (IndexMissing, EmbedderUnavailable, RuntimeError, ValueError) as exc:
         return _error(str(exc))
     status = retrieval_service.status()
     header = (

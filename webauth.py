@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import secrets
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -38,6 +39,8 @@ _LOGIN_PAGE = Path(__file__).resolve().parent / "fm" / "frontend" / "login.html"
 
 _password = ""
 _tokens: set[str] = set()
+_service_token = ""
+SERVICE_TOKEN_ENV = "FM_AUTH_TOKEN"
 
 router = APIRouter()
 
@@ -63,7 +66,11 @@ def _token_from_headers(headers: Headers) -> str:
 
 def is_authenticated(headers: Headers) -> bool:
     token = _token_from_headers(headers)
-    return bool(token) and token in _tokens
+    if not token:
+        return False
+    if _service_token and secrets.compare_digest(token, _service_token):
+        return True
+    return token in _tokens
 
 
 class AuthMiddleware:
@@ -137,9 +144,11 @@ async def auth_logout(request: Request):
 
 
 def install_webauth(app: FastAPI, password: str) -> None:
-    global _password
+    global _password, _service_token
     if not password:
         raise RuntimeError("web_password 为空,不能启动登录门")
     _password = password
+    _service_token = secrets.token_urlsafe(32)
+    os.environ[SERVICE_TOKEN_ENV] = _service_token
     app.add_middleware(AuthMiddleware)
     app.include_router(router)

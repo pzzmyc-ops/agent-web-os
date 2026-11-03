@@ -520,15 +520,15 @@ async def retrieval_status():
 async def retrieval_rebuild():
     from .live_conns import broadcast
     from .retrieval import retrieval_service
-    from .retrieval.service import IndexBusy, OllamaUnavailable
+    from .retrieval.service import EmbedderUnavailable, IndexBusy
 
     try:
         info = await retrieval_service.start_rebuild(broadcast)
     except IndexBusy as exc:
         return JSONResponse({"ok": False, "error": str(exc), "status": retrieval_service.status()}, status_code=409)
-    except OllamaUnavailable as exc:
+    except EmbedderUnavailable as exc:
         return JSONResponse({"ok": False, "error": str(exc), "status": retrieval_service.status()}, status_code=503)
-    return JSONResponse({"ok": True, "ollama": info, "status": retrieval_service.status()})
+    return JSONResponse({"ok": True, "embedder": info, "status": retrieval_service.status()})
 
 
 @router.post("/api/v1/retrieval/cancel")
@@ -543,7 +543,7 @@ async def retrieval_cancel():
 async def retrieval_add_source(request: Request):
     from .live_conns import broadcast
     from .retrieval import retrieval_service
-    from .retrieval.service import IndexBusy, OllamaUnavailable
+    from .retrieval.service import EmbedderUnavailable, IndexBusy
 
     body = await request.json()
     try:
@@ -552,9 +552,9 @@ async def retrieval_add_source(request: Request):
         return JSONResponse({"ok": False, "error": str(exc), "status": retrieval_service.status()}, status_code=400)
     except IndexBusy as exc:
         return JSONResponse({"ok": False, "error": str(exc), "status": retrieval_service.status()}, status_code=409)
-    except OllamaUnavailable as exc:
+    except EmbedderUnavailable as exc:
         return JSONResponse({"ok": False, "error": str(exc), "status": retrieval_service.status()}, status_code=503)
-    return JSONResponse({"ok": True, "ollama": info, "status": retrieval_service.status()})
+    return JSONResponse({"ok": True, "embedder": info, "status": retrieval_service.status()})
 
 
 @router.post("/api/v1/retrieval/sources/remove")
@@ -771,7 +771,7 @@ async def workspace_read(path: str = ""):
     if not fp.is_file():
         return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
     mime = MIME_MAP.get(fp.suffix.lower(), "application/octet-stream")
-    return _FileResponse(fp, media_type=mime)
+    return _FileResponse(fp, media_type=mime, headers={"Cache-Control": "no-cache"})
 
 
 @router.post("/workspace/upload")
@@ -887,7 +887,7 @@ async def media_serve(media_id: str):
     if not fp.is_file():
         return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
     mime = MIME_MAP.get(fp.suffix.lower(), "application/octet-stream")
-    return _FileResponse(fp, media_type=mime)
+    return _FileResponse(fp, media_type=mime, headers={"Cache-Control": "no-cache"})
 
 
 # ---------------- media urls (for frontend asset panel) ----------------

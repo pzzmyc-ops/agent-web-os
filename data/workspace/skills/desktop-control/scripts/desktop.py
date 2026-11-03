@@ -14,9 +14,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from websockets.sync.client import connect
+
+AUTH_ENV = "FM_AUTH_TOKEN"
+COOKIE_NAME = "fm_auth"
 
 
 def ws_url(base: str) -> str:
@@ -28,8 +32,18 @@ def ws_url(base: str) -> str:
     raise SystemExit(f"--base 要是 http:// 或 https:// 开头的地址,收到的是: {base}")
 
 
+def auth_headers() -> dict:
+    token = os.environ.get(AUTH_ENV, "").strip()
+    if not token:
+        raise SystemExit(
+            f"环境变量 {AUTH_ENV} 为空:这个脚本只能在文件管理器自己开的终端里跑,"
+            "那里的终端由服务进程启动,自动带有登录凭证"
+        )
+    return {"Cookie": f"{COOKIE_NAME}={token}"}
+
+
 def request(base: str, payload: dict, timeout: float) -> dict:
-    with connect(ws_url(base), open_timeout=timeout) as ws:
+    with connect(ws_url(base), open_timeout=timeout, additional_headers=auth_headers()) as ws:
         ws.send(json.dumps({"type": "hello"}))
         hello = json.loads(ws.recv(timeout=timeout))
         if not hello.get("ok"):

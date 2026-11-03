@@ -48,10 +48,16 @@ PATH_RULES = (
     "file_access_ls 不传目录列出工作区目录,传 / 列出所有盘。"
 )
 
+TERMINAL_RULES = (
+    "终端命令保持简单:超过一行、带 -c 内联代码、或引号嵌套超过一层的,先用 file_access_write 写成脚本文件,再用 terminal 执行那个文件。"
+    "不要在一条命令里嵌套多层引号和转义。"
+)
+
 INSTRUCTIONS_BASE = (
     "你是一个有用的中文助手,回答简洁、准确。"
     "你有文件系统访问能力,和文件管理器看到的是同一套路径(file_access_* 工具)。"
     + PATH_RULES
+    + TERMINAL_RULES
     + "\n\n"
     "## 工具文档\n"
     "工具列表里只有简短标题,需要了解某个工具的完整用法时先调 "
@@ -136,7 +142,7 @@ def group_chat_instructions(channel: str) -> str:
         "\n\n"
         "## 能力\n"
         "可以读写文件管理器里的文件、加载技能做报表和数据查询、生成媒体、跑定时任务。"
-        + PATH_RULES +
+        + PATH_RULES + TERMINAL_RULES +
         "工具列表只有短标题，用法先调 tool_help；技能用 load_skill 或 skill_view 加载，"
         "技能目录绝对路径以加载结果为准，scripts 用 terminal 按该路径执行。"
         "联网工具是 Playwright，查天气、搜网页、打开页面都用它，不是没有联网能力。"
@@ -169,6 +175,7 @@ def feishu_webhook_instructions(url: str) -> str:
         "你是一个有用的中文助手,回答简洁、准确。"
         "你有文件系统访问能力,和文件管理器看到的是同一套路径(file_access_* 工具)。"
         + PATH_RULES
+        + TERMINAL_RULES
         + "\n\n"
         "## 工具文档\n"
         "工具列表里只有简短标题,需要了解某个工具的完整用法时先调 "

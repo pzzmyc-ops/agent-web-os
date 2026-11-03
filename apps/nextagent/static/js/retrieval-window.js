@@ -80,7 +80,7 @@ function renderPanel(body, st) {
     + row("已索引", st.files + " 个文件 / " + st.chunks + " 个块")
     + row("上次建立", escapeText(st.lastBuild || "从未"))
     + row("向量模型", escapeText(st.model) + (st.indexedModel && st.indexedModel !== st.model ? "（索引用的是 " + escapeText(st.indexedModel) + "，需重建）" : ""))
-    + row("Ollama", escapeText(st.ollamaUrl))
+    + row("嵌入服务", escapeText(st.embeddingUrl))
     + '<div class="ctxwin-label">向量化文件夹</div>'
     + '<div class="rtv-add">'
     + '<input id="rtvAddInput" class="ctxwin-input" type="text" placeholder="文件夹绝对路径，如 D:/proj/src；相对路径按工作区目录解析" value="' + escapeText(_pendingPath) + '"' + (st.active ? " disabled" : "") + ">"
@@ -90,7 +90,7 @@ function renderPanel(body, st) {
     + '<p class="ctxwin-hint">添加文件夹后立即对它向量化；移除文件夹会删掉它的全部向量数据，不动磁盘上的原文件。'
     + '「建立 / 更新索引」把所有文件夹重新增量同步一遍，只对改动过的文件重新向量化。'
     + '每个文件夹内遵守它自己的 .gitignore / .cursorignore / .cursorindexingignore，跳过二进制、超过 1MB 的文件以及 node_modules 等目录。'
-    + '索引不会自动跟随文件改动。向量由本机 Ollama 计算。</p>'
+    + '索引不会自动跟随文件改动。向量由嵌入服务计算。</p>'
     + '<p id="rtvWinError" class="ctxwin-error"' + (st.error ? "" : " hidden") + ">" + escapeText(st.error || "") + "</p>"
     + "</div>";
   bindPanel(body);

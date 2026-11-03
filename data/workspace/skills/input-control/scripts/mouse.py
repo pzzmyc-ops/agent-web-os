@@ -44,28 +44,27 @@ def move_to(x, y):
 
 
 def smooth_move(x, y, steps=None):
-    """分步移动模拟真人轨迹，带随机间隔。"""
-def save_last_click(x, y):
-    try:
-        with open("D:/mafagent/data/workspace/temp/.last_click", "w") as f:
-            f.write(f"{int(x)},{int(y)}")
-    except:
-        pass
-
-def click(x=None, y=None, button="left", count=1):
-    if x is not None and y is not None:
-        smooth_move(x, y)
-        save_last_click(x, y)
-    else:
-        cx, cy = get_cursor()
-        save_last_click(cx, cy)
+    """分步移动到逻辑坐标并验证位置；不允许静默报告成功。"""
+    sx, sy = get_cursor()
+    dx, dy = int(x) - sx, int(y) - sy
     dist = max(abs(dx), abs(dy))
     if steps is None:
         steps = max(6, min(20, dist // 30))
     for i in range(1, steps + 1):
         t = i / steps
-        move_to(sx + dx * t, sy + dy * t)
+        move_to(round(sx + dx * t), round(sy + dy * t))
         time.sleep(random.uniform(0.005, 0.02))
+    target = (int(x), int(y))
+    # 系统可能在最后一步仍处理鼠标消息；短暂等待再验证，最多重新定位两次。
+    for _ in range(3):
+        time.sleep(0.06)
+        actual = get_cursor()
+        if max(abs(actual[0] - target[0]), abs(actual[1] - target[1])) <= 2:
+            return
+        move_to(*target)
+    actual = get_cursor()
+    if max(abs(actual[0] - target[0]), abs(actual[1] - target[1])) > 2:
+        raise RuntimeError(f"mouse move failed: expected {target}, actual {actual}")
 
 
 def click(x=None, y=None, button="left", count=1):

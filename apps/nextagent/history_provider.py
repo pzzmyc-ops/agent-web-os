@@ -125,6 +125,10 @@ def to_model_messages(
             return
         head = _assistant_contents(pending_assistant, me) if pending_assistant is not None else []
         pending_assistant = None
+        unique: dict[str, dict] = {}
+        for call in pending_calls:
+            unique[str(call.get("call_id") or "")] = call
+        pending_calls[:] = list(unique.values())
         out.append(Message(role="assistant", contents=head + [_call_content(c) for c in pending_calls]))
         for call in pending_calls:
             call_id = str(call.get("call_id") or "")

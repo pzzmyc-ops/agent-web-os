@@ -14,7 +14,7 @@ ${AGENT_PYTHON} ${HERMES_SKILL_DIR}/scripts/desktop.py --base ${GATEWAY_BASE} li
 ```
 
 `${AGENT_PYTHON}` 和 `${GATEWAY_BASE}` 加载时已替换成本机真实值，照抄即可，不要自己写
-python 路径或端口。不需要任何 token 或鉴权。
+python 路径或端口。登录凭证脚本自己从终端环境变量 `FM_AUTH_TOKEN` 读取，终端里已经带着，不要手填、不要自己去登录。
 
 桌面能做什么**不在这份文档里**，由桌面自己上报。所以流程固定是：先看有哪些屏 → 问那块屏
 支持什么 → 再动手。不要凭印象写操作名。

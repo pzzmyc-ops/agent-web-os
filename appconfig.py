@@ -29,7 +29,9 @@ class Config:
     onlyoffice_jwt: str = ""
     public_url: str = ""
     ollama_url: str = "http://127.0.0.1:11434"
-    embedding_model: str = "bge-m3"
+    embedding_model: str = ""
+    embedding_url: str = ""
+    embedding_api_key: str = ""
     comfyui_port: int = 8188
     comfyui_url: str = ""
     hermes_port: int = 18787
@@ -146,6 +148,9 @@ def load_config() -> Config:
     remote_port = int(platform("remote_port"))
     guacd_port = int(platform("guacd_port"))
     public_url = str(pick("public_url", ""))
+    embedding_url = str(need("embedding_url")).strip().rstrip("/")
+    if not embedding_url.startswith(("http://", "https://")):
+        raise RuntimeError("embedding_url 必须是 http 或 https 地址: " + embedding_url)
 
     return Config(
         base_url=str(pick("base_url", f"http://127.0.0.1:{web_port}/api/llm-proxy/v1")),
@@ -161,7 +166,9 @@ def load_config() -> Config:
         onlyoffice_jwt=str(pick("onlyoffice_jwt", "")),
         public_url=public_url,
         ollama_url=ollama_url,
-        embedding_model=str(pick("embedding_model", "bge-m3")),
+        embedding_model=str(need("embedding_model")),
+        embedding_url=embedding_url,
+        embedding_api_key=str(need("embedding_api_key")),
         comfyui_port=comfyui_port,
         comfyui_url=comfyui_url,
         hermes_port=hermes_port,
