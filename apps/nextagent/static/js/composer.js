@@ -52,13 +52,11 @@ export function deriveComposerAction(threadId, pendingSend, outboxFlushing) {
 export function applyComposerState(cs, action) {
   if (!cs || !action) return;
   cs.isStreaming = action.mode === "stop";
-  if (action.taskId) {
-    cs.currentTaskId = action.taskId;
-    cs.liveTaskId = action.taskId;
-  } else if (!cs.isStreaming && !cs.retainedTaskId) {
-    cs.currentTaskId = null;
-    cs.liveTaskId = "";
-  }
+  // currentTaskId 记的是「这个会话的直播 DOM 属于哪一轮」,回合结束后仍要留着:
+  // 迟到的块事件靠它落回原来那条时间轴。它不参与「是否在跑」的判断。
+  if (!action.taskId) return;
+  cs.currentTaskId = action.taskId;
+  cs.liveTaskId = action.taskId;
 }
 
 export function syncComposerForConv(cs, reason) {

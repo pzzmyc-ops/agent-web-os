@@ -2,12 +2,17 @@
 
 流程:accept → 收 auth → 回 auth_response(带对话列表 + currentId)→ 循环收帧。
 收 text → 起一个异步任务用 stream_adapter.run_turn 驱动 Agent 并流式发块协议。
-支持 ping / task_control(cancel,协作式)/ thread_focus。
+支持 ping / sync_state / task_control(cancel,协作式)/ thread_focus。
+
+「某 thread 此刻有没有回合在跑」只有一个权威:_thread_active_tasks。它一变就
+broadcast 一份 tasks_snapshot;前端拿它对齐按钮、等待提示和本地镜像,不自己推断
+回合结束 —— turn_complete 只是「快去看一眼」的提示,丢了也不会卡住。
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 
@@ -64,12 +69,24 @@ def bind_queue_runtime(web_agent, store) -> None:
 
 
 def mark_thread_task(thread_id: str, task_id: str) -> None:
+    """登记一个回合在跑,并把新名单推给前端。
+
+    "某 thread 此刻有没有回合在跑"全进程只有这一份权威。前端不再自己推断:
+    名单一变就推一份,前端拿它对齐按钮、等待提示和本地镜像表。
+    """
     _thread_active_tasks[thread_id] = task_id
+    publish_tasks()
 
 
 def unmark_thread_task(thread_id: str, task_id: str) -> None:
+    """回合结束:先收回名单并推给前端,再放行排队中的消息。
+
+    推送必须排在 schedule_pump 之前 —— 否则下一轮先 mark,前端会看到
+    「先出现新回合、旧回合还没消失」的顺序,按钮会闪一下。
+    """
     if _thread_active_tasks.get(thread_id) == task_id:
         _thread_active_tasks.pop(thread_id, None)
+        publish_tasks()
         schedule_pump(thread_id)
 
 
@@ -413,19 +430,22 @@ def _cancel_task(tid: str, thread_id: str, local_tasks: dict[str, asyncio.Task])
 _pumping: set[str] = set()
 
 
-def schedule_pump(thread_id: str) -> None:
-    task = asyncio.create_task(_pump(thread_id))
-    task.add_done_callback(_pump_done)
+def _spawn(coro, label: str) -> None:
+    """起一个后台推送任务。推送不是业务路径,失败只记日志。"""
+    task = asyncio.create_task(coro)
+    task.add_done_callback(lambda t: _spawn_done(t, label))
 
 
-def _pump_done(task: asyncio.Task) -> None:
+def _spawn_done(task: asyncio.Task, label: str) -> None:
     if task.cancelled():
         return
     exc = task.exception()
     if exc is not None:
-        import logging
+        logging.getLogger("mafagent.ws").error("%s失败: %s", label, exc)
 
-        logging.getLogger("mafagent.ws").error("队列启动失败: %s", exc)
+
+def schedule_pump(thread_id: str) -> None:
+    _spawn(_pump(thread_id), "启动排队消息")
 
 
 async def _pump(thread_id: str) -> None:
@@ -467,7 +487,19 @@ def _queue_state_frame(thread_id: str) -> dict:
 
 
 def publish_queue(thread_id: str) -> None:
-    asyncio.create_task(broadcast(_queue_state_frame(thread_id)))
+    _spawn(broadcast(_queue_state_frame(thread_id)), "推送队列状态")
+
+
+def publish_tasks() -> None:
+    """把「谁在跑」的权威名单推给所有在线连接。
+
+    前端不自己推断回合有没有结束:名单一变就推一份,丢帧也能被下一次探测纠回来。
+    """
+    _spawn(_broadcast_tasks(), "推送回合名单")
+
+
+async def _broadcast_tasks() -> None:
+    await broadcast(_control("tasks_snapshot", {"tasks": await _active_tasks_payload()}))
 
 
 async def _broadcast_title(store, thread_id: str, content: str) -> None:
@@ -521,7 +553,7 @@ def _launch_user(
     async def runner() -> None:
         try:
             _truncate_to_cursor(store, thread_id)
-            asyncio.create_task(_broadcast_title(store, thread_id, item.content))
+            _spawn(_broadcast_title(store, thread_id, item.content), "推送标题")
             if item.active_roles and not item.skip_handoff:
                 await run_handoff_turn(
                     web_agent, emitter, store,
@@ -649,6 +681,14 @@ async def ws_endpoint(websocket: WebSocket) -> None:
 
             elif mtype == "ping":
                 await send(_control("pong", {"serverTime": _now_ms(), "connectionId": data.get("connectionId", "")}))
+
+            elif mtype == "sync_state":
+                # 前端自证:它认为还有回合在跑,要一份权威名单来对齐。
+                # 丢了 turn_complete、连接闪断、别的窗口发起的回合,都靠这条自愈。
+                await send(_control("tasks_snapshot", {"tasks": await _active_tasks_payload()}))
+                sync_thread = str(data.get("threadId") or "").strip()
+                if sync_thread:
+                    await send(_queue_state_frame(sync_thread))
 
             elif mtype == "thread_focus":
                 await send(_control("tasks_snapshot", {"tasks": await _active_tasks_payload()}))
@@ -909,7 +949,6 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     ))
                     continue
                 if thread_id in _thread_active_tasks:
-                    import logging
                     logging.getLogger("mafagent.ws").warning(
                         "reject edit_and_regenerate: thread %s has active task %s",
                         thread_id, _thread_active_tasks[thread_id],
@@ -1008,7 +1047,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                         unmark_thread_task(th, tid)
 
                 mark_thread_task(thread_id, task_id)
-                asyncio.create_task(_broadcast_title(store, thread_id, new_content))
+                _spawn(_broadcast_title(store, thread_id, new_content), "推送标题")
                 tasks[task_id] = asyncio.create_task(runner_edit_user())
                 register_runner_task(thread_id, tasks[task_id])
 
