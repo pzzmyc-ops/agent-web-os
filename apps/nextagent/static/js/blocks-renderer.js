@@ -1580,6 +1580,7 @@ function viewImageMediaFromBlock(b) {
     content: md.join("\n"),
     mediaContent: md.join("\n"),
     urls: cleaned,
+    bgTaskId: String(b.blockId || ""),
   };
 }
 

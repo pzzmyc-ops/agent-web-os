@@ -105,6 +105,8 @@ def main():
         print(f"[窗口 {args.window}] 逻辑rect=({l},{t},{r},{b})")
     else:
         l, t = 0, 0
+        r, b = lw, lh
+    im_win_w, im_win_h = r - l, b - t
 
     if args.grid:
         d = ImageDraw.Draw(im)
@@ -172,6 +174,12 @@ def main():
         except TypeError:
             d_click.text((cx_img + r + 8, cy_img - 12), text_click, font=font_click, fill=(0, 255, 0))
         print(f"[标记点击位置] 逻辑坐标({cx_log},{cy_log}) -> 截图物理像素({cx_img},{cy_img})")
+
+    try:
+        import annotate as _ann
+        _ann.draw_click(im, (l, t, im_win_w, im_win_h))
+    except Exception:
+        pass
 
     im.save(args.out)
     print(f"[截图] {args.out} {im.size}  (网格标签=逻辑坐标，可直接 mouse.py click X Y)")

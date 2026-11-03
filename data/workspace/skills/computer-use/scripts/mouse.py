@@ -14,6 +14,7 @@
     python scripts/mouse.py scroll N        # 滚轮（正=向上，负=向下）
 """
 import ctypes
+import os
 import sys
 import time
 import random
@@ -89,8 +90,53 @@ def scroll(n):
     time.sleep(0.05)
 
 
+def _pop_hwnd(argv):
+    """取走 --hwnd N，返回 (hwnd|None, 其余参数)。"""
+    if "--hwnd" not in argv:
+        return None, argv
+    i = argv.index("--hwnd")
+    try:
+        hwnd = int(argv[i + 1])
+    except (IndexError, ValueError):
+        raise SystemExit("--hwnd 需要一个整数窗口句柄")
+    return hwnd, argv[:i] + argv[i + 2:]
+
+
+def _prepare(hwnd, lx, ly):
+    """点击前的统一准备：置前 + 逻辑坐标换算 + 命中校验。失败直接退出不点。"""
+    if hwnd is None:
+        return
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import winfocus
+
+    ok, how = winfocus.ensure_front(hwnd)
+    if not ok:
+        raise SystemExit(f"[中止] 无法把窗口 {hwnd} 置到前台（GetForegroundWindow 未变成它），不点击")
+    ok, info = winfocus.point(hwnd, lx, ly)
+    if not ok:
+        raise SystemExit(
+            f"[中止] 逻辑坐标 ({lx},{ly}) 换算后 ({info['cursor']}) 命中的是 "
+            f"窗口 {info['hit']} {info.get('hit_title','')!r}，不是目标 {hwnd} —— 该点被别的窗口挡住或坐标被误解，不点击"
+        )
+    print(f"[前置] {how}  factor={info['factor']}  logical=({lx},{ly}) -> cursor={info['cursor']}")
+
+
+def _record_click(hwnd, lx, ly):
+    """记录落点，供后续截图把上一次点击位置画出来。"""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import annotate
+        title = ""
+        if hwnd:
+            import winfocus
+            title = winfocus.window_title(hwnd)
+        annotate.save_last_click(lx, ly, hwnd or 0, title)
+    except Exception:
+        pass
+
+
 def main():
-    argv = sys.argv[1:]
+    hwnd, argv = _pop_hwnd(sys.argv[1:])
     if not argv:
         print(__doc__)
         return
@@ -102,26 +148,39 @@ def main():
         print(f"[鼠标位置] ({x}, {y})")
     elif cmd == "move":
         x, y = int(argv[1]), int(argv[2])
+        _prepare(hwnd, x, y)
         smooth_move(x, y)
-        print(f"[移动] 到 ({x}, {y})")
+        print(f"[移动] 到逻辑 ({x}, {y})")
     elif cmd == "click":
         x = y = None
         if len(argv) >= 3:
             x, y = int(argv[1]), int(argv[2])
+        if x is not None:
+            _prepare(hwnd, x, y)
         click(x, y, button="left")
-        print(f"[点击] ({x}, {y})")
+        if x is not None:
+            _record_click(hwnd, x, y)
+        print(f"[点击] 逻辑 ({x}, {y})")
     elif cmd == "dclick":
         x = y = None
         if len(argv) >= 3:
             x, y = int(argv[1]), int(argv[2])
+        if x is not None:
+            _prepare(hwnd, x, y)
         click(x, y, button="left", count=2)
-        print(f"[双击] ({x}, {y})")
+        if x is not None:
+            _record_click(hwnd, x, y)
+        print(f"[双击] 逻辑 ({x}, {y})")
     elif cmd == "rclick":
         x = y = None
         if len(argv) >= 3:
             x, y = int(argv[1]), int(argv[2])
+        if x is not None:
+            _prepare(hwnd, x, y)
         click(x, y, button="right")
-        print(f"[右键] ({x}, {y})")
+        if x is not None:
+            _record_click(hwnd, x, y)
+        print(f"[右键] 逻辑 ({x}, {y})")
     elif cmd == "scroll":
         scroll(int(argv[1]))
         print(f"[滚轮] {argv[1]}")

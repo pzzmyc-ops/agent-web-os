@@ -75,7 +75,7 @@ python scripts/to_screen.py --px 989 --py 533
 
 浏览器内点击**首选 CDP 页面坐标**（click.py），换算只一步：`视口CSS = 截图物理像素 ÷ devicePixelRatio`，浏览器自己消化缩放。
 
-极少数验证码会检测 CDP 合成事件（点了无反应）→ **降级到系统级鼠标**（input-control skill）。此时鼠标要的是**逻辑屏幕坐标**，别手拼公式，用 `to_screen.py` 自动算：
+极少数验证码会检测 CDP 合成事件（点了无反应）→ **降级到系统级鼠标**（computer-use skill）。此时鼠标要的是**逻辑屏幕坐标**，别手拼公式，用 `to_screen.py` 自动算：
 
 ```bash
 python scripts/to_screen.py --px 989 --py 533   # 截图物理像素 → 逻辑屏幕坐标(自读窗口原点/dpr)
