@@ -18,7 +18,7 @@
     /workspace/*, /media/*  agent 前端的文件读写(与 /api/* 同一个根目录)
     /static/*               agent 前端静态资源
 
-    /api/llm-proxy/v1       内嵌网关:OpenAI 兼容端点(config.base_url 指向它)
+    /api/llm-proxy/v1       内嵌网关:媒体模型目录与热加载(对话模型直连 config.json 的 upstreams)
     /api/v1/media/*         内嵌网关:媒体模型调用
 
 挂载顺序是硬约束:文件管理器前端是 "/" 上的 catch-all StaticFiles,任何在它

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -16,9 +16,7 @@ _CONFIG_PATH = _PROJECT_ROOT / "config.json"
 
 @dataclass
 class Config:
-    base_url: str
     api_key: str
-    model: str
     max_context_window_tokens: int
     max_output_tokens: int
     web_port: int
@@ -40,13 +38,7 @@ class Config:
     deepseek_embed_port: int = 13081
     remote_port: int = 14822
     guacd_port: int = 4822
-    deepseek_api_key: str = ""
-
-    @property
-    def gateway_port(self) -> int:
-        from urllib.parse import urlparse
-        p = urlparse(self.base_url).port
-        return p if p else self.web_port
+    upstreams: list = field(default_factory=list)
 
     @property
     def gateway_base(self) -> str:
@@ -153,9 +145,7 @@ def load_config() -> Config:
         raise RuntimeError("embedding_url 必须是 http 或 https 地址: " + embedding_url)
 
     return Config(
-        base_url=str(pick("base_url", f"http://127.0.0.1:{web_port}/api/llm-proxy/v1")),
         api_key=str(pick("api_key", "")),
-        model=str(pick("model", "")),
         max_context_window_tokens=int(pick("max_context_window_tokens", 1048576)),
         max_output_tokens=int(pick("max_output_tokens", 16384)),
         web_port=web_port,
@@ -177,18 +167,102 @@ def load_config() -> Config:
         deepseek_embed_port=deepseek_embed_port,
         remote_port=remote_port,
         guacd_port=guacd_port,
-        deepseek_api_key=str(pick("deepseek_api_key", "")),
+        upstreams=normalize_upstreams(pick("upstreams", [])),
     )
 
 
-def write_deepseek_api_key(key: str) -> None:
-    text = str(key or "").strip()
-    if not text:
-        raise RuntimeError("DeepSeek API Key 为空")
+def normalize_upstreams(raw) -> list[dict]:
+    from urllib.parse import urlparse
+
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise RuntimeError("upstreams 必须是数组")
+    out: list[dict] = []
+    names: set[str] = set()
+    models_seen: dict[str, str] = {}
+    for i, item in enumerate(raw):
+        where = f"upstreams[{i}]"
+        if not isinstance(item, dict):
+            raise RuntimeError(where + " 必须是对象")
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise RuntimeError(where + " 缺少 name")
+        if name.lower() in names:
+            raise RuntimeError(where + " 名称重复: " + name)
+        names.add(name.lower())
+        base_url = str(item.get("base_url") or "").strip().rstrip("/")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.query or parsed.fragment:
+            raise RuntimeError(where + " base_url 必须是 http(s) 地址且不带查询串: " + base_url)
+        api_key = str(item.get("api_key") or "").strip()
+        models_raw = item.get("models")
+        if isinstance(models_raw, str):
+            models_raw = [m for m in models_raw.replace(",", "\n").split("\n")]
+        if not isinstance(models_raw, list):
+            raise RuntimeError(where + " models 必须是数组")
+        models: list[str] = []
+        for m in models_raw:
+            mid = str(m or "").strip()
+            if not mid:
+                continue
+            if mid in models:
+                continue
+            owner = models_seen.get(mid)
+            if owner is not None and owner != name:
+                raise RuntimeError(where + f" 模型 {mid} 已在上游 {owner} 里登记,模型名不能跨上游重复")
+            models_seen[mid] = name
+            models.append(mid)
+        if not models:
+            raise RuntimeError(where + " 至少要填一个模型")
+        headers_raw = item.get("headers") or {}
+        if not isinstance(headers_raw, dict):
+            raise RuntimeError(where + " headers 必须是对象")
+        headers = {str(k).strip(): str(v) for k, v in headers_raw.items() if str(k).strip()}
+        out.append({
+            "name": name,
+            "base_url": base_url,
+            "api_key": api_key,
+            "models": models,
+            "headers": headers,
+        })
+    return out
+
+
+def write_upstreams(upstreams) -> list[dict]:
+    clean = normalize_upstreams(upstreams)
     if not _CONFIG_PATH.is_file():
         raise RuntimeError("找不到 config.json")
     raw = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise RuntimeError("config.json 不是对象")
-    raw["deepseek_api_key"] = text
+    raw["upstreams"] = clean
+    raw.pop("model", None)
     _CONFIG_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return clean
+
+
+def normalize_embedding(url: str, api_key: str, model: str) -> dict:
+    text = str(url or "").strip().rstrip("/")
+    if not text.startswith(("http://", "https://")):
+        raise RuntimeError("embedding_url 必须是 http 或 https 地址: " + text)
+    name = str(model or "").strip()
+    if not name:
+        raise RuntimeError("嵌入模型名不能为空")
+    key = str(api_key or "").strip()
+    if not key:
+        raise RuntimeError("嵌入服务密钥不能为空")
+    return {"embedding_url": text, "embedding_api_key": key, "embedding_model": name}
+
+
+def write_embedding(url: str, api_key: str, model: str) -> dict:
+    clean = normalize_embedding(url, api_key, model)
+    if not _CONFIG_PATH.is_file():
+        raise RuntimeError("找不到 config.json")
+    raw = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError("config.json 不是对象")
+    raw.update(clean)
+    raw.pop("model", None)
+    _CONFIG_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return clean

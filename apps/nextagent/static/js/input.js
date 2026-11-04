@@ -1163,6 +1163,12 @@ function openModelDropdown() {
   dropdown.className = "tool-dropdown";
 
   var profiles = getModelDropdownProfiles();
+  if (!profiles.length) {
+    var empty = document.createElement("div");
+    empty.className = "tool-dropdown-item";
+    empty.textContent = "请添加模型";
+    dropdown.appendChild(empty);
+  }
   for (var i = 0; i < profiles.length; i++) {
     (function (profile) {
       var item = document.createElement("div");

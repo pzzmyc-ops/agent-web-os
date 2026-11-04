@@ -22,25 +22,13 @@ from . import session_log
 from .identity import current_user
 from .live_conns import broadcast, register_conn, unregister_conn
 from .maf_tools.interrupt import interrupt_task
-from .stream_adapter import TurnEmitter, _log_user_message, run_turn, run_handoff_turn
+from .stream_adapter import TurnEmitter, run_turn, run_handoff_turn
 from .turn_event_bus import bus as event_bus
-from .turn_protocol import TextBlocks, turn_frame
+from .turn_protocol import turn_frame
 
 router = APIRouter()
 
 DEFAULT_TITLE = "新对话"
-ASK_DEEPSEEK_KEY = (
-    "你选中了 DeepSeek 官方模型（deepseek-official-flash / deepseek-official-pro），"
-    "还没有官方 API Key，这条链路还不能调用。\n\n"
-    "请到 https://platform.deepseek.com 创建 API Key，把完整的 Key 作为下一条消息发过来。"
-    "程序会写入本机配置，这条消息不会当聊天内容保存。\n\n"
-    "Key 写入后即可用官方 DeepSeek。其它已接入的模型不受影响。"
-)
-DEEPSEEK_KEY_SAVED = (
-    "DeepSeek 官方 API Key 已写入。现在可以用官方 DeepSeek 对话。"
-    "若要加新模型，直接让 Agent 添加即可。"
-)
-_awaiting_deepseek_key = False
 
 #: 进程级单回合守卫:同一 thread 同一时刻只允许一个回合(task)。
 #: 前端流式期间本就禁发,但刷新/重连会重置前端状态;没有这个守卫时,回合黑屏期的
@@ -167,135 +155,6 @@ async def publish_session_ui(store, thread_id: str) -> None:
         "threadId": thread_id,
         "sessionUi": store.load_session_ui(thread_id),
     }))
-
-
-async def _plain_assistant_turn(web_agent, store, thread_id: str, message_id: str, text: str, *, user_content: str = "") -> None:
-    task_id = "task_" + uuid.uuid4().hex[:12]
-    emitter = TurnEmitter(broadcast, task_id=task_id, thread_id=thread_id)
-    blocks = TextBlocks(emitter, store, task_id=task_id, thread_id=thread_id)
-    _thread_active_tasks[thread_id] = task_id
-    try:
-        await event_bus.open(task_id, thread_id=thread_id, message_id=message_id)
-        await emitter.control(
-            "message_accepted",
-            {
-                "taskId": task_id,
-                "threadId": thread_id,
-                "messageId": message_id,
-                "eventSeq": 0,
-                "status": "queued",
-            },
-            status="queued",
-        )
-        await emitter.turn(
-            "stream_start",
-            {
-                "taskType": "chat",
-                "content": user_content,
-                "isAgentRecall": False,
-                "recallSource": "",
-            },
-        )
-        await emitter.turn("turn_start", {})
-        if user_content:
-            await _log_user_message(store, emitter, content=user_content, attachments=[])
-        await blocks.text(text)
-        await blocks.finalize()
-        store.append_event(
-            thread_id,
-            session_log.EV_TURN_END,
-            task_id=task_id,
-            interrupted=False,
-            error="",
-        )
-        await emitter.turn(
-            "turn_complete",
-            {
-                "content": text,
-                "thinking": "",
-                "compressed": False,
-                "compressionCount": 0,
-                "interrupted": False,
-            },
-            status="ok",
-        )
-        await event_bus.close(task_id)
-    finally:
-        unmark_thread_task(thread_id, task_id)
-
-
-async def _plain_notice_turn(web_agent, store, thread_id: str, message_id: str, text: str) -> None:
-    task_id = "task_" + uuid.uuid4().hex[:12]
-    emitter = TurnEmitter(broadcast, task_id=task_id, thread_id=thread_id)
-    blocks = TextBlocks(emitter, store, task_id=task_id, thread_id=thread_id)
-    _thread_active_tasks[thread_id] = task_id
-    try:
-        await event_bus.open(task_id, thread_id=thread_id, message_id=message_id)
-        await emitter.control(
-            "message_accepted",
-            {
-                "taskId": task_id,
-                "threadId": thread_id,
-                "messageId": message_id,
-                "eventSeq": 0,
-                "status": "queued",
-            },
-            status="queued",
-        )
-        await emitter.turn(
-            "stream_start",
-            {
-                "taskType": "chat",
-                "content": "",
-                "isAgentRecall": False,
-                "recallSource": "",
-            },
-        )
-        await emitter.turn("turn_start", {})
-        await blocks.notice(text)
-        await blocks.finalize()
-        store.append_event(
-            thread_id,
-            session_log.EV_TURN_END,
-            task_id=task_id,
-            interrupted=False,
-            error="",
-        )
-        await emitter.turn(
-            "turn_complete",
-            {
-                "content": "",
-                "thinking": "",
-                "compressed": False,
-                "compressionCount": 0,
-                "interrupted": False,
-            },
-            status="ok",
-        )
-        await event_bus.close(task_id)
-    finally:
-        unmark_thread_task(thread_id, task_id)
-
-
-def _official_deepseek(model: str) -> bool:
-    mid = (model or "").strip().lower()
-    return mid == "deepseek-official-flash" or mid == "deepseek-official-pro"
-
-
-def _apply_deepseek_api_key(text: str) -> None:
-    import urllib.request
-    from appconfig import load_config, write_deepseek_api_key
-    import apps.nextagent.config as agent_config
-
-    write_deepseek_api_key(text)
-    agent_config._cfg_cache = None
-    cfg = load_config()
-    url = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1/admin/reload"
-    req = urllib.request.Request(url, data=b"{}", method="POST")
-    req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        if resp.status != 200:
-            raise RuntimeError("网关重新加载失败: HTTP " + str(resp.status))
 
 
 def _control(ev_type: str, data: dict, *, status: str = "ok") -> dict:
@@ -825,47 +684,6 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     continue
                 if not store.thread_exists(thread_id):
                     thread_id = store.ensure_initial_thread()
-                from appconfig import load_config
-
-                model = store.selected_chat_model(thread_id)
-                keyed = bool(str(load_config().deepseek_api_key or "").strip())
-                global _awaiting_deepseek_key
-                if not keyed and _awaiting_deepseek_key and _official_deepseek(model):
-                    if thread_id in _thread_active_tasks:
-                        await send(_control(
-                            "message_rejected",
-                            {"threadId": thread_id, "messageId": mid, "reason": "task_active"},
-                            status="rejected",
-                        ))
-                        continue
-                    if not content:
-                        await send(_control(
-                            "message_rejected",
-                            {"threadId": thread_id, "messageId": mid, "reason": "empty_key"},
-                            status="rejected",
-                        ))
-                        continue
-                    _apply_deepseek_api_key(content)
-                    _awaiting_deepseek_key = False
-                    await send(_control("deepseek_key_saved", {"threadId": thread_id}))
-                    await _plain_notice_turn(web_agent, store, thread_id, mid, DEEPSEEK_KEY_SAVED)
-                    continue
-                if not keyed and _awaiting_deepseek_key:
-                    _awaiting_deepseek_key = False
-                if not keyed and _official_deepseek(model):
-                    if thread_id in _thread_active_tasks:
-                        await send(_control(
-                            "message_rejected",
-                            {"threadId": thread_id, "messageId": mid, "reason": "task_active"},
-                            status="rejected",
-                        ))
-                        continue
-                    _awaiting_deepseek_key = True
-                    _truncate_to_cursor(store, thread_id)
-                    await _plain_assistant_turn(
-                        web_agent, store, thread_id, mid, ASK_DEEPSEEK_KEY, user_content=content,
-                    )
-                    continue
                 from .store import APP_FEISHU_WEBHOOK
 
                 if store.thread_app(thread_id) == APP_FEISHU_WEBHOOK and not store.feishu_webhook_url(thread_id):

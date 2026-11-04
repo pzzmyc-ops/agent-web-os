@@ -12,6 +12,7 @@ import { messageBus } from "./message-bus.js";
 
 var WIN_ID = "retrieval-index";
 var _pendingPath = "";
+var _embed = { url: "", key: "", model: "", dirty: false, note: "" };
 
 function fetchJson(path, method, body) {
   return naFetch(API_BASE + path, {
@@ -71,16 +72,42 @@ function sourceRows(st) {
   }).join("");
 }
 
+function syncEmbed(st) {
+  if (_embed.dirty || !st) return;
+  _embed.url = st.embeddingUrl || "";
+  _embed.model = st.model || "";
+  if (st.embeddingApiKey) _embed.key = st.embeddingApiKey;
+}
+
+function embedForm(st) {
+  var mismatch = st.indexedModel && st.indexedModel !== _embed.model
+    ? "当前索引用的是 " + st.indexedModel + "，改模型后需要重建索引。"
+    : "";
+  var disabled = st.active ? " disabled" : "";
+  return '<div class="ctxwin-label">嵌入服务</div>'
+    + '<input id="rtvEmbedUrl" class="ctxwin-input" type="text" placeholder="接口地址，如 http://127.0.0.1:8888/v1" value="' + escapeText(_embed.url) + '"' + disabled + ">"
+    + '<div class="ctxwin-label">密钥</div>'
+    + '<input id="rtvEmbedKey" class="ctxwin-input" type="text" placeholder="API Key" value="' + escapeText(_embed.key) + '"' + disabled + ">"
+    + '<div class="ctxwin-label">嵌入模型名</div>'
+    + '<input id="rtvEmbedModel" class="ctxwin-input" type="text" placeholder="模型名，如 bge-m3" value="' + escapeText(_embed.model) + '"' + disabled + ">"
+    + '<div class="rtv-add">'
+    + '<button type="button" id="rtvEmbedProbe" class="wm-footer-btn"' + disabled + ">测试连接</button>"
+    + '<button type="button" id="rtvEmbedSave" class="wm-footer-btn wm-footer-primary"' + disabled + ">保存</button>"
+    + "</div>"
+    + (mismatch ? '<p class="ctxwin-hint">' + escapeText(mismatch) + "</p>" : "")
+    + '<p id="rtvEmbedNote" class="ctxwin-hint"' + (_embed.note ? "" : " hidden") + ">" + escapeText(_embed.note) + "</p>";
+}
+
 function renderPanel(body, st) {
   var pct = st.total > 0 ? Math.round((st.processed / st.total) * 100) : (st.active ? 0 : 100);
+  syncEmbed(st);
   body.innerHTML =
     '<div class="ctxwin">'
     + (st.active ? '<div class="ctxwin-bar"><i style="width:' + pct + '%"></i></div>' : "")
     + row("状态", escapeText(phaseText(st)))
     + row("已索引", st.files + " 个文件 / " + st.chunks + " 个块")
     + row("上次建立", escapeText(st.lastBuild || "从未"))
-    + row("向量模型", escapeText(st.model) + (st.indexedModel && st.indexedModel !== st.model ? "（索引用的是 " + escapeText(st.indexedModel) + "，需重建）" : ""))
-    + row("嵌入服务", escapeText(st.embeddingUrl))
+    + embedForm(st)
     + '<div class="ctxwin-label">向量化文件夹</div>'
     + '<div class="rtv-add">'
     + '<input id="rtvAddInput" class="ctxwin-input" type="text" placeholder="文件夹绝对路径，如 D:/proj/src；相对路径按工作区目录解析" value="' + escapeText(_pendingPath) + '"' + (st.active ? " disabled" : "") + ">"
@@ -100,7 +127,82 @@ function renderPanel(body, st) {
   if (cancel) cancel.disabled = !st.active;
 }
 
+function readEmbed(body) {
+  var url = body.querySelector("#rtvEmbedUrl");
+  var key = body.querySelector("#rtvEmbedKey");
+  var model = body.querySelector("#rtvEmbedModel");
+  if (!url || !key || !model) return null;
+  return { url: url.value.trim(), api_key: key.value.trim(), model: model.value.trim() };
+}
+
+function markEmbedDirty(body) {
+  var draft = readEmbed(body);
+  if (!draft) return;
+  _embed.dirty = true;
+  _embed.url = draft.url;
+  _embed.key = draft.api_key;
+  _embed.model = draft.model;
+}
+
+function onProbeEmbed() {
+  var body = getWindowBody(WIN_ID);
+  var draft = body && readEmbed(body);
+  if (!draft) return;
+  markEmbedDirty(body);
+  _embed.note = "正在测试…";
+  var btn = body.querySelector("#rtvEmbedProbe");
+  if (btn) btn.disabled = true;
+  fetchJson("/api/v1/retrieval/embedding/probe", "POST", draft)
+    .then(function (res) {
+      var info = res.embedder || {};
+      var listed = Array.isArray(info.available_models) ? info.available_models.length : 0;
+      _embed.note = "连接正常，模型 " + (info.model || draft.model) + " 可用" + (listed ? "（服务共 " + listed + " 个模型）" : "");
+      _embed.dirty = true;
+      fillFromStatus();
+    })
+    .catch(function (err) {
+      _embed.note = "";
+      fillFromStatus().then(function () { showError(err.message); });
+    });
+}
+
+function onSaveEmbed() {
+  var body = getWindowBody(WIN_ID);
+  var draft = body && readEmbed(body);
+  if (!draft) return;
+  markEmbedDirty(body);
+  var btn = body.querySelector("#rtvEmbedSave");
+  if (btn) btn.disabled = true;
+  _embed.note = "正在测试并保存…";
+  fetchJson("/api/v1/retrieval/embedding", "PUT", draft)
+    .then(function (res) {
+      _embed.dirty = false;
+      _embed.note = "已保存，模型 " + ((res.embedder && res.embedder.model) || draft.model);
+      applyStatus(res);
+    })
+    .catch(function (err) {
+      _embed.note = "";
+      fillFromStatus().then(function () { showError(err.message); });
+    });
+}
+
+function fillFromStatus() {
+  return fetchJson("/api/v1/retrieval/status").then(applyStatus);
+}
+
 function bindPanel(body) {
+  ["#rtvEmbedUrl", "#rtvEmbedKey", "#rtvEmbedModel"].forEach(function (sel) {
+    var input = body.querySelector(sel);
+    if (!input) return;
+    input.addEventListener("input", function () {
+      markEmbedDirty(body);
+      _embed.note = "";
+    });
+  });
+  var probe = body.querySelector("#rtvEmbedProbe");
+  var save = body.querySelector("#rtvEmbedSave");
+  if (probe) probe.onclick = onProbeEmbed;
+  if (save) save.onclick = onSaveEmbed;
   var input = body.querySelector("#rtvAddInput");
   var addBtn = body.querySelector("#rtvAddBtn");
   if (input) {
@@ -128,6 +230,7 @@ function showError(message) {
 }
 
 function applyStatus(res) {
+  syncEmbed(res.status);
   var body = getWindowBody(WIN_ID);
   if (body) renderPanel(body, res.status);
 }
@@ -135,7 +238,7 @@ function applyStatus(res) {
 function fillWindow() {
   var body = getWindowBody(WIN_ID);
   if (!body) throw new Error("retrieval window body missing");
-  return fetchJson("/api/v1/retrieval/status").then(applyStatus).catch(function (err) {
+  return fillFromStatus().catch(function (err) {
     showError(err.message);
   });
 }

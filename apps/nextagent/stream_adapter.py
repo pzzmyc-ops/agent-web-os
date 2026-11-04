@@ -111,7 +111,7 @@ async def run_turn(
                 await _log_user_message(store, emitter, content=content, attachments=att_list)
             return
         if not (model or "").strip():
-            raise RuntimeError("未指定模型")
+            raise RuntimeError("请添加模型")
         model = str(model).strip()
         session = web_agent.session_for(thread_id)
         # 压缩要赶在这一轮的提问落盘之前:新问题不该被卷进被压的那三段里。
@@ -205,7 +205,7 @@ async def run_handoff_turn(
     task_id = emitter.task_id
     thread_id = emitter.thread_id
     if not (model or "").strip():
-        raise RuntimeError("未指定模型")
+        raise RuntimeError("请添加模型")
     model = str(model).strip()
     roles = [r for r in (roles or []) if r.get("id")]
 

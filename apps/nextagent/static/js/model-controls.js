@@ -7,6 +7,7 @@ import { persistSessionUi } from "./session-ui.js";
 var catalogState = {
   byId: {},
   ids: [],
+  ready: false,
   effortValue: "medium",
   effortOptions: [],
 };
@@ -151,14 +152,10 @@ export function updateModelBadge() {
   var row = id ? catalogState.byId[id] : null;
   if (row) {
     badge.textContent = row.displayName || row.id;
-    badge.style.display = "inline";
-  } else if (id) {
-    badge.textContent = id;
-    badge.style.display = "inline";
   } else {
-    badge.textContent = "";
-    badge.style.display = "none";
+    badge.textContent = "请添加模型";
   }
+  badge.style.display = "inline";
 }
 
 export function selectAgentProfile(profileId) {
@@ -174,7 +171,11 @@ export function selectAgentProfile(profileId) {
 
 export function applySessionModelState(ui) {
   var profile = String((ui && ui.agentProfile) || "").trim();
-  if (profile) state.selectedAgentProfile = profile;
+  if (catalogState.ready && catalogState.ids.indexOf(profile) < 0) {
+    profile = catalogState.ids.length ? catalogState.ids[0] : "";
+  }
+  var changed = profile !== String((ui && ui.agentProfile) || "").trim();
+  state.selectedAgentProfile = profile;
   if (ui && typeof ui.thinking === "boolean") {
     _lockThinking = ui.thinking;
   } else {
@@ -187,6 +188,9 @@ export function applySessionModelState(ui) {
   }
   updateModelBadge();
   applyModelReasoningChrome();
+  if (changed) {
+    setTimeout(function () { persistSessionUi(); }, 0);
+  }
 }
 
 export function snapshotSessionModel() {
@@ -227,6 +231,7 @@ export async function fetchModelsCatalog() {
   var rows = Array.isArray(data.models) ? data.models : [];
   catalogState.byId = {};
   catalogState.ids = [];
+  catalogState.ready = true;
   rows.forEach(function (row) {
     var pid = String(row.id || "").trim();
     if (!pid) return;
@@ -238,16 +243,14 @@ export async function fetchModelsCatalog() {
     var row = catalogState.byId[id];
     return { id: id, displayName: (row && row.displayName) || id };
   });
-  var hasSelected = catalogState.ids.indexOf(state.selectedAgentProfile) >= 0;
+  var prev = String(state.selectedAgentProfile || "");
+  var hasSelected = catalogState.ids.indexOf(prev) >= 0;
   if (!hasSelected) {
-    if (catalogState.ids.length) {
-      state.selectedAgentProfile = catalogState.ids[0];
-    } else {
-      state.selectedAgentProfile = "";
-    }
+    state.selectedAgentProfile = catalogState.ids.length ? catalogState.ids[0] : "";
   }
   updateModelBadge();
   applyModelReasoningChrome();
+  if (state.selectedAgentProfile !== prev) persistSessionUi();
 }
 
 export function initModelControls() {

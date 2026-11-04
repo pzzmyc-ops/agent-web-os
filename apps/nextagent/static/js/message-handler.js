@@ -368,27 +368,6 @@ messageBus.on("message_rejected", function (msg) {
   rejectPendingAck(messageId, reason);
 });
 
-messageBus.on("deepseek_key_saved", function (msg) {
-  var threadId = (msg.data && msg.data.threadId) || "";
-  var cs = threadId ? getConvState(threadId) : activeConv();
-  var area = getChatAreaEl();
-  if (area) {
-    var rows = area.querySelectorAll(".msg-row.user");
-    if (rows.length) {
-      var last = rows[rows.length - 1];
-      last.parentNode.removeChild(last);
-      var known = parseInt(area.dataset.userCount, 10) || 0;
-      if (known > 0) area.dataset.userCount = String(known - 1);
-    }
-  }
-  if (cs) {
-    cs.pendingSend = false;
-    cs.outboxFlushing = false;
-    syncComposerForConv(cs, "deepseek_key_saved");
-  }
-  syncSendButton();
-});
-
 messageBus.on("history_snapshot", function (msg) {
   var snapEvents = (msg.data && (msg.data.events || msg.data.messages)) || [];
   var snapThreadId = (msg.data && msg.data.threadId) || state.pendingBootstrapThreadId || state.currentConversationId;

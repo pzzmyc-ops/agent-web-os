@@ -24,6 +24,7 @@ import { initRoles } from "./roles.js";
 import { initMemory, syncMemoryWindow } from "./memory.js";
 import { initContextWindow, syncContextWindow } from "./context-window.js";
 import { initRetrievalWindow } from "./retrieval-window.js";
+import { initUpstreamsWindow } from "./upstreams-window.js";
 import { loadHistory, reloadThreadHistory } from "./history.js";
 import { loadConversationList, loadFolderList, loadCurrentConvId, saveCurrentConvId, saveConversationList, saveFolderList } from "./cache.js";
 import { initDesktopLink } from "./desktop-link.js";
@@ -348,6 +349,7 @@ loadWorkspaceEnv()
       initMemory();
       initContextWindow();
       initRetrievalWindow();
+      initUpstreamsWindow();
       fetchConversations().then(function (convRes) {
         state.httpInitDone = true;
         console.log("[init] 获取会话列表:", convRes);

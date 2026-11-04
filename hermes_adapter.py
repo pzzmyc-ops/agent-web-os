@@ -170,22 +170,33 @@ def _port_taken(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _gateway_models() -> tuple[str, list[str], str, str]:
-    from appconfig import load_config
-    from gateway.adapters.registry import list_chat_catalog
-
-    cfg = load_config()
-    ids = [str(item.get("id") or "").strip() for item in list_chat_catalog()]
-    ids = [item for item in ids if item]
-    if not ids:
-        raise RuntimeError("网关对话模型清单为空,Hermes 不能启动")
-    key = str(cfg.api_key or "").strip() or "local"
-    base = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1"
-    return ids[0], ids, base, key
+_API_MODES = {"chat": "chat_completions", "responses": "codex_responses", "anthropic": "anthropic_messages"}
 
 
-def _gateway_chat() -> tuple[str, list[str], str, str]:
-    return _gateway_models()
+def _upstream_providers() -> tuple[str, str, list[dict]]:
+    from apps.nextagent.config import resolve_default_chat_model
+    from apps.nextagent.upstreams import load_upstreams, resolve_model
+    from apps.nextagent.upstreams import protocol as upstream_protocol
+
+    ups = load_upstreams()
+    if not ups:
+        raise RuntimeError("还没有登记任何上游接口,Hermes 不能启动")
+    default = resolve_default_chat_model()[0]
+    entries: list[dict] = []
+    for u in ups:
+        modes = {upstream_protocol.detect(u.base_url, m) for m in u.models}
+        if len(modes) != 1:
+            raise RuntimeError(f"上游 {u.name} 的模型判出了多种协议 {sorted(modes)},Hermes 一个供应商只能有一种,请拆成两个上游")
+        entries.append({
+            "name": u.name,
+            "base_url": u.base_url,
+            "api_key": u.api_key or "local",
+            "model": u.models[0],
+            "models": list(u.models),
+            "api_mode": _API_MODES[modes.pop()],
+            "discover_models": False,
+        })
+    return default, resolve_model(default).name, entries
 
 
 def _apply_workspace(home: Path, workspace: str) -> None:
@@ -211,7 +222,7 @@ def _apply_workspace(home: Path, workspace: str) -> None:
         settings_path.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _apply_config(home: Path, workspace: str, default: str, ids: list[str], base: str, key: str) -> None:
+def _apply_config(home: Path, workspace: str, default: str, provider_name: str, entries: list[dict]) -> None:
     path = home / "config.yaml"
     if not path.is_file():
         raise RuntimeError(f"找不到 Hermes 配置: {path}")
@@ -226,19 +237,9 @@ def _apply_config(home: Path, workspace: str, default: str, ids: list[str], base
     term["cwd"] = workspace
     data["model"] = {
         "default": default,
-        "provider": f"custom:{PROVIDER_NAME}",
+        "provider": f"custom:{provider_name}",
     }
-    data["custom_providers"] = [
-        {
-            "name": PROVIDER_NAME,
-            "base_url": base,
-            "api_key": key,
-            "model": default,
-            "models": ids,
-            "api_mode": "chat_completions",
-            "discover_models": False,
-        }
-    ]
+    data["custom_providers"] = entries
     providers = data.get("providers")
     if providers is None:
         data["providers"] = {}
@@ -246,6 +247,8 @@ def _apply_config(home: Path, workspace: str, default: str, ids: list[str], base
         raise RuntimeError(f"Hermes 配置 providers 不是对象: {path}")
     else:
         providers.pop(PROVIDER_NAME, None)
+        for entry in entries:
+            providers.pop(entry["name"], None)
     path.write_text(
         yaml.safe_dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
         encoding="utf-8",
@@ -269,9 +272,9 @@ def start(workspace: str) -> None:
     if not home.is_dir():
         raise RuntimeError(f"找不到 Hermes 家目录: {home}")
     root = str(Path(workspace).resolve())
-    default, ids, base, key = _gateway_chat()
+    default, provider_name, entries = _upstream_providers()
     _apply_workspace(home, root)
-    _apply_config(home, root, default, ids, base, key)
+    _apply_config(home, root, default, provider_name, entries)
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     env["HERMES_WEBUI_AGENT_DIR"] = str(AGENT_DIR)

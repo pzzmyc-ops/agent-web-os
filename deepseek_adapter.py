@@ -4,6 +4,7 @@ import http.client
 import http.cookiejar
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -27,8 +28,6 @@ DIST = HARNESS / "apps" / "web" / "dist" / "index.html"
 _CFG = load_config()
 PORT = _CFG.deepseek_port
 EMBED_PORT = _CFG.deepseek_embed_port
-PROVIDER = "mafagent"
-CREDENTIAL = "MAFAGENT_API_KEY"
 HOP = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
                  "te", "trailers", "transfer-encoding", "upgrade", "host", "origin", "referer",
                  "cookie", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user"})
@@ -74,8 +73,6 @@ PREFIX_PATCH = (
 _SKILLS_ROOT = Path(_CFG.skills_dir)
 SKILLS = (
     _SKILLS_ROOT / "desktop-control",
-    _SKILLS_ROOT / "model-adapter",
-    _SKILLS_ROOT / "model-discovery",
 )
 
 _proc: subprocess.Popen | None = None
@@ -266,18 +263,39 @@ def _cmd_path(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/")
 
 
-def _gateway_chat() -> tuple[str, list[str], str, str, str]:
-    from appconfig import load_config
-    from gateway.adapters.registry import list_chat_catalog
+_PI_API = {"chat": "openai-completions", "responses": "openai-responses", "anthropic": "anthropic-messages"}
 
-    cfg = load_config()
-    ids = [str(item.get("id") or "").strip() for item in list_chat_catalog()]
-    ids = [item for item in ids if item]
-    if not ids:
-        raise RuntimeError("网关对话模型清单为空,DeepSeek Harness 不能启动")
-    key = str(cfg.api_key or "").strip() or "local"
-    base = cfg.gateway_base.rstrip("/") + "/api/llm-proxy/v1"
-    return ids[0], ids, base, key, cfg.gateway_base
+
+def _credential_name(provider: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", provider).strip("_").upper() or "UPSTREAM"
+    return "MAFAGENT_" + slug + "_API_KEY"
+
+
+def _upstream_settings() -> tuple[str, str, dict, dict]:
+    from apps.nextagent.config import resolve_default_chat_model
+    from apps.nextagent.upstreams import load_upstreams, resolve_model
+    from apps.nextagent.upstreams import protocol as upstream_protocol
+
+    ups = load_upstreams()
+    if not ups:
+        raise RuntimeError("还没有登记任何上游接口,DeepSeek Harness 不能启动")
+    default = resolve_default_chat_model()[0]
+    providers: dict = {}
+    creds: dict = {}
+    for u in ups:
+        modes = {upstream_protocol.detect(u.base_url, m) for m in u.models}
+        if len(modes) != 1:
+            raise RuntimeError(f"上游 {u.name} 的模型判出了多种协议 {sorted(modes)},Harness 一个供应商只能有一种,请拆成两个上游")
+        cred = _credential_name(u.name)
+        providers[u.name] = {
+            "displayName": u.name,
+            "apiKeyEnv": cred,
+            "api": _PI_API[modes.pop()],
+            "baseURL": u.base_url,
+            "models": [{"id": m, "name": m} for m in u.models],
+        }
+        creds[cred] = u.api_key or "local"
+    return default, resolve_model(default).name, providers, creds
 
 
 def _adapt_skill_md(name: str, text: str, dest: Path, gateway_base: str, python: str, key: str) -> str:
@@ -293,40 +311,6 @@ def _adapt_skill_md(name: str, text: str, dest: Path, gateway_base: str, python:
         "Authorization: Bearer hhy-fdbbfe7eb27fab7b8d3409e2",
         f"Authorization: Bearer {key}",
     )
-    if name == "model-adapter":
-        text = text.replace(
-            "agent 能用 `read / write / edit` 读写、用 `render_media` 在对话里展示。",
-            "agent 能用 read / write / edit 读写,文件管理器里能直接看到。",
-        )
-    if name == "model-discovery":
-        old = (
-            "## 4. 拿到结果后：直接 render_media 展示\n"
-            "\n"
-            "产物已经由网关落进工作区了，`data.paths` 里就是文件的真实绝对路径、正斜杠（形如\n"
-            "`D:/mafagent/data/workspace/media/seedream/a1b2c3d4.png`）。**不用下载**，直接把这个路径原样交给工具（不是 curl）：\n"
-            "\n"
-            "```\n"
-            "render_media(path=\"D:/mafagent/data/workspace/media/seedream/a1b2c3d4.png\")\n"
-            "```\n"
-            "\n"
-            "图片/视频/音频会直接在对话里播放，其他格式给下载卡片。\n"
-            "\n"
-            "路径要从响应 JSON 里读出来照抄，一个字符都不要改 —— 自己手打或者凭印象重写，\n"
-            "文件就找不到了。要看文件内容用 `read`，要挪位置用 `read / write / edit`。\n"
-            "\n"
-            "**不调 render_media，用户就只看到一段路径文字，看不到东西。**\n"
-        )
-        new = (
-            "## 4. 拿到结果后：把工作区路径告诉用户\n"
-            "\n"
-            "产物已经由网关落进工作区了，`data.paths` 里就是文件的真实绝对路径、正斜杠（形如\n"
-            "`D:/mafagent/data/workspace/media/seedream/a1b2c3d4.png`）。不用下载。路径要从响应 JSON 里读出来照抄，\n"
-            "一个字符都不要改。要看文件用 read，要改文件用 write / edit。\n"
-            "文件管理器里能直接看到这些文件。\n"
-        )
-        if old not in text:
-            raise RuntimeError("model-discovery 的第 4 节对不上,不能改写")
-        text = text.replace(old, new)
     return text
 
 
@@ -346,22 +330,12 @@ def _sync_skills(gateway_base: str, key: str) -> None:
         md.write_text(text, encoding="utf-8")
 
 
-def _apply_home(default: str, ids: list[str], base: str, key: str) -> None:
+def _apply_home(default: str, default_provider: str, providers: dict, creds: dict) -> None:
     HOME.mkdir(parents=True, exist_ok=True)
     settings = {
-        "llm-pi-ai": {
-            "providers": {
-                PROVIDER: {
-                    "displayName": PROVIDER,
-                    "apiKeyEnv": CREDENTIAL,
-                    "api": "openai-completions",
-                    "baseURL": base,
-                    "models": [{"id": item, "name": item} for item in ids],
-                }
-            }
-        },
+        "llm-pi-ai": {"providers": providers},
         "agent-default-model": {
-            "provider": PROVIDER,
+            "provider": default_provider,
             "model": default,
         },
     }
@@ -371,7 +345,7 @@ def _apply_home(default: str, ids: list[str], base: str, key: str) -> None:
     )
     cred = HOME / ".credentials.yaml"
     cred.write_text(
-        yaml.safe_dump({CREDENTIAL: key}, allow_unicode=True, default_flow_style=False, sort_keys=False),
+        yaml.safe_dump(creds, allow_unicode=True, default_flow_style=False, sort_keys=False),
         encoding="utf-8",
     )
     os.chmod(cred, 0o600)
@@ -483,9 +457,9 @@ def start(workspace: str) -> None:
         raise RuntimeError(f"工作目录不存在: {root}")
     if not any(Path(root).iterdir()):
         raise RuntimeError(f"工作目录是空的: {root}")
-    default, ids, base, key, gateway_base = _gateway_chat()
-    _apply_home(default, ids, base, key)
-    _sync_skills(gateway_base, key)
+    default, default_provider, providers, creds = _upstream_settings()
+    _apply_home(default, default_provider, providers, creds)
+    _sync_skills(_CFG.gateway_base, str(_CFG.api_key or "").strip() or "local")
     env = os.environ.copy()
     env["DSH_HOME"] = str(HOME)
     env.pop("OPENAI_BASE_URL", None)

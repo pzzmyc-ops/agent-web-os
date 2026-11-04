@@ -48,7 +48,7 @@ dingtalk_bot = DingTalkBot(
     web_agent,
     Path(cfg.workspace_dir) / "sessions" / "dingtalk_bot.json",
     Path(cfg.fm_root_dir),
-    cfg.model,
+    "",
 )
 
 router = APIRouter()
@@ -89,11 +89,6 @@ def install_agent(app: FastAPI) -> None:
 
 
 def _load_models() -> list[dict]:
-    """前端模型下拉的数据。没有 adapter 时返回空,前端据此显示"无可用模型"。
-
-    不再用 cfg.model 兜底:配置里的默认模型不等于「有一个能用的 adapter」,
-    硬塞进下拉会让界面在根本没有可用模型时还显示一个(点了也会失败)。
-    """
     return load_chat_models()
 
 
@@ -516,6 +511,47 @@ async def retrieval_status():
     return JSONResponse({"ok": True, "status": retrieval_service.status()})
 
 
+@router.post("/api/v1/retrieval/embedding/probe")
+async def retrieval_embedding_probe(request: Request):
+    from .retrieval import retrieval_service
+    from .retrieval.openai_embed import EmbedderUnavailable
+
+    body = await request.json()
+    try:
+        info = await retrieval_service.probe_embedding(
+            str(body.get("url") or ""),
+            str(body.get("api_key") or ""),
+            str(body.get("model") or ""),
+        )
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except EmbedderUnavailable as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+    return JSONResponse({"ok": True, "embedder": info})
+
+
+@router.put("/api/v1/retrieval/embedding")
+async def retrieval_embedding_save(request: Request):
+    from .retrieval import retrieval_service
+    from .retrieval.openai_embed import EmbedderUnavailable
+    from .retrieval.service import IndexBusy
+
+    body = await request.json()
+    try:
+        info = await retrieval_service.save_embedding(
+            str(body.get("url") or ""),
+            str(body.get("api_key") or ""),
+            str(body.get("model") or ""),
+        )
+    except IndexBusy as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "status": retrieval_service.status()}, status_code=409)
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "status": retrieval_service.status()}, status_code=400)
+    except EmbedderUnavailable as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "status": retrieval_service.status()}, status_code=503)
+    return JSONResponse({"ok": True, "embedder": info, "status": retrieval_service.status()})
+
+
 @router.post("/api/v1/retrieval/rebuild")
 async def retrieval_rebuild():
     from .live_conns import broadcast
@@ -921,6 +957,53 @@ async def media_urls(request: Request):
 @router.get("/api/chat/models")
 async def chat_models():
     return JSONResponse({"models": _load_models()})
+
+
+@router.get("/api/v1/upstreams")
+async def upstreams_list():
+    from .upstreams import public_upstreams
+
+    return JSONResponse({"ok": True, "upstreams": public_upstreams()})
+
+
+@router.put("/api/v1/upstreams")
+async def upstreams_save(request: Request):
+    import apps.nextagent.config as agent_config
+    from .upstreams import save_upstreams
+    from .upstreams import protocol as upstream_protocol
+
+    body = await request.json()
+    items = body.get("upstreams") if isinstance(body, dict) else None
+    if not isinstance(items, list):
+        return JSONResponse({"ok": False, "error": "upstreams 必须是数组"}, status_code=400)
+    try:
+        clean = save_upstreams(items)
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    from .live_conns import broadcast
+
+    agent_config._cfg_cache = None
+    upstream_protocol.forget_all()
+    await broadcast({"type": "models_changed", "data": {"models": _load_models()}, "status": "ok"})
+    return JSONResponse({"ok": True, "upstreams": clean, "models": _load_models()})
+
+
+@router.post("/api/v1/upstreams/probe")
+async def upstreams_probe(request: Request):
+    from .upstreams import probe, upstream_from_dict
+    from .upstreams import protocol as upstream_protocol
+
+    body = await request.json()
+    try:
+        up = upstream_from_dict(body if isinstance(body, dict) else {})
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    try:
+        result = await probe(up)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status_code=502)
+    result["protocols"] = {m: upstream_protocol.detect(up.base_url, m) for m in up.models}
+    return JSONResponse({"ok": True, "probe": result})
 
 
 @router.get("/api/v1/skills")

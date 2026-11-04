@@ -91,11 +91,32 @@ class RetrievalService:
             "sources": sources,
             "model": self.embedder.model,
             "embeddingUrl": self.embedder.url,
+            "embeddingApiKey": self.embedder.api_key,
             "indexedModel": st.get_meta("model") or "",
             "lastBuild": st.get_meta("last_build") or "",
             "workspace": self.workspace,
             "dbPath": self.db_path,
         }
+
+    def _new_embedder(self, url: str, api_key: str, model: str) -> OpenAIEmbedder:
+        from appconfig import normalize_embedding
+
+        clean = normalize_embedding(url, api_key, model)
+        return OpenAIEmbedder(clean["embedding_url"], clean["embedding_api_key"], clean["embedding_model"])
+
+    async def probe_embedding(self, url: str, api_key: str, model: str) -> dict[str, Any]:
+        return await self._new_embedder(url, api_key, model).check()
+
+    async def save_embedding(self, url: str, api_key: str, model: str) -> dict[str, Any]:
+        if self.is_active():
+            raise IndexBusy("正在建立索引,先停止再改嵌入模型")
+        embedder = self._new_embedder(url, api_key, model)
+        info = await embedder.check()
+        from appconfig import write_embedding
+
+        write_embedding(embedder.url, embedder.api_key, embedder.model)
+        self.embedder = embedder
+        return info
 
     def is_active(self) -> bool:
         return self._task is not None and not self._task.done()

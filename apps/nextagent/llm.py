@@ -1,4 +1,4 @@
-"""构建指向 gateway 的 OpenAI 兼容 ChatClient。
+"""构建 agent 的 ChatClient:消息按 OpenAI chat 格式整理,发送交给 upstreams 包按上游协议翻译。
 
 DeepSeek(及某些严格实现)要求 tool 消息必须紧跟在对应的 assistant tool_calls 之后。
 框架 Handoff / compaction 流程都可能把这一对拆开,导致 API 拒绝整个请求。
@@ -323,11 +323,6 @@ MAX_TOOL_ITERATIONS_PER_TURN = 1_000_000
 
 
 def build_chat_client(cfg: Config) -> MafChatClient:
-    client = MafChatClient(
-        model="deepseek-official-flash",
-        api_key=cfg.api_key,
-        base_url=cfg.base_url,
-    )
-    client.function_invocation_configuration["max_iterations"] = MAX_TOOL_ITERATIONS_PER_TURN
-    client.function_invocation_configuration["include_detailed_errors"] = True
-    return client
+    from .upstreams.client import build_upstream_client
+
+    return build_upstream_client(cfg.max_output_tokens)
