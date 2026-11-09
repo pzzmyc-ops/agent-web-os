@@ -548,6 +548,40 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(result["status"], "interrupted")
         self.assertTrue(process_alive(session.pid))
 
+    def test_interrupted_command_still_returns_to_idle(self):
+        session = self.ready()
+        session.submit_line(_sleep_cmd(2))
+        first = session.wait_command(10, lambda: True)
+        self.assertEqual(first["status"], "interrupted")
+        done = session.wait_command(15)
+        self.assertEqual(done["status"], "idle")
+        self.assertEqual(done["exit_code"], 0)
+        session.submit_line(_echo("after-interrupt"))
+        self.assertIn("after-interrupt", session.wait_command(20)["output"])
+
+    @unittest.skipIf(IS_WINDOWS, "raw byte output goes through the posix pty")
+    def test_non_utf8_output_does_not_wedge_the_session(self):
+        for name, raw in (("invalid", "ok\\377"), ("truncated", "ok\\344\\270"), ("gbk", "\\304\\343\\272\\303")):
+            with self.subTest(name):
+                session = self.ready()
+                session.submit_line("printf '" + raw + "\\nEND\\n'")
+                done = session.wait_command(15)
+                self.assertEqual(done["status"], "idle")
+                self.assertEqual(done["exit_code"], 0)
+                self.assertIn("\ufffd", done["output"])
+                self.assertIn("END", done["output"])
+                session.submit_line(_echo("still-alive"))
+                self.assertIn("still-alive", session.wait_command(20)["output"])
+
+    @unittest.skipIf(IS_WINDOWS, "split reads only happen on the posix pty")
+    def test_multibyte_split_across_reads_is_decoded(self):
+        session = self.ready()
+        session.submit_line("printf '\\344\\270'; sleep 0.5; printf '\\255\\346\\226\\207\\n'")
+        done = session.wait_command(15)
+        self.assertEqual(done["status"], "idle")
+        self.assertIn("中文", done["output"])
+        self.assertNotIn("\ufffd", done["output"])
+
     def test_two_sessions_have_distinct_window_ids(self):
         first = self.ready()
         second = self.ready()

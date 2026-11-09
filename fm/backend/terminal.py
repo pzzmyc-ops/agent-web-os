@@ -1,4 +1,5 @@
 import asyncio
+import codecs
 import json
 import os
 import queue
@@ -126,7 +127,7 @@ class _PosixPty:
         os.close(slave)
         self.master = master
         self.pid = self.proc.pid
-        self._pending = b""
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._closed = False
 
     def read(self) -> str:
@@ -134,13 +135,9 @@ class _PosixPty:
             chunk = os.read(self.master, 4096)
             if not chunk:
                 raise EOFError("Pty is closed")
-            self._pending += chunk
-            try:
-                text = self._pending.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-            self._pending = b""
-            return text
+            text = self._decoder.decode(chunk)
+            if text:
+                return text
 
     def write(self, text: str) -> None:
         os.write(self.master, text.encode("utf-8"))
