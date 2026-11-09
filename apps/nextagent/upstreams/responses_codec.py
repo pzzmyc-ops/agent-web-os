@@ -122,6 +122,28 @@ def encode(body: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _argument_text(args: Any) -> str:
+    if isinstance(args, dict):
+        return json.dumps(args, ensure_ascii=False)
+    if not isinstance(args, str):
+        return ""
+    text = args.strip()
+    while text:
+        try:
+            loaded = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+        if isinstance(loaded, dict):
+            return text
+        if not isinstance(loaded, str):
+            return text
+        nxt = loaded.strip()
+        if nxt == text:
+            return text
+        text = nxt
+    return ""
+
+
 def _usage(resp: dict) -> dict:
     u = resp.get("usage") or {}
     details = u.get("input_tokens_details") or {}
@@ -153,7 +175,7 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
         if key:
             item_to_idx[key] = idx
         if idx not in rows:
-            rows[idx] = {"id": "", "name": "", "arguments": "", "announced": False}
+            rows[idx] = {"id": "", "name": "", "arguments": "", "announced": False, "args_sent": False}
         return idx
 
     def apply_item(idx: int, item: dict) -> None:
@@ -163,11 +185,23 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
             row["id"] = call_id
         if item.get("name"):
             row["name"] = str(item["name"])
-        args = item.get("arguments")
-        if args and not row["arguments"]:
-            row["arguments"] = str(args)
         if item.get("id"):
             item_to_idx[str(item["id"])] = idx
+
+    def set_arguments(idx: int, item: dict) -> None:
+        args = item.get("arguments")
+        if args:
+            rows[idx]["arguments"] = _argument_text(args)
+
+    def emit_call(idx: int):
+        row = rows[idx]
+        if row["args_sent"]:
+            return flush_row(idx, "")
+        piece = row["arguments"]
+        chunk = flush_row(idx, piece)
+        if chunk is not None and piece:
+            row["args_sent"] = True
+        return chunk
 
     def flush_row(idx: int, piece: str):
         row = rows[idx]
@@ -203,10 +237,11 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
                 finish = "tool_calls"
                 idx = idx_for(i, item.get("id") or item.get("call_id"))
                 apply_item(idx, item)
+                set_arguments(idx, item)
                 rc = role_chunk()
                 if rc:
                     yield rc
-                ch = flush_row(idx, "" if rows[idx]["announced"] else rows[idx]["arguments"])
+                ch = emit_call(idx)
                 if ch:
                     yield ch
             rc = role_chunk()
@@ -225,19 +260,19 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
             if item.get("type") == "function_call":
                 idx = idx_for(ev.get("output_index"), item.get("id"))
                 apply_item(idx, item)
-                tool_chunk = flush_row(idx, "")
-        elif kind == "response.function_call_arguments.delta":
-            idx = idx_for(ev.get("output_index"), ev.get("item_id"))
-            piece = str(ev.get("delta") or "")
-            rows[idx]["arguments"] += piece
-            tool_chunk = flush_row(idx, piece)
+                tool_chunk = emit_call(idx)
+        elif kind in (
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
+        ):
+            continue
         elif kind == "response.output_item.done":
             item = ev.get("item") or {}
             if item.get("type") == "function_call":
                 idx = idx_for(ev.get("output_index"), item.get("id"))
                 apply_item(idx, item)
-                row = rows[idx]
-                tool_chunk = flush_row(idx, "" if row["announced"] else row["arguments"])
+                set_arguments(idx, item)
+                tool_chunk = emit_call(idx)
         else:
             continue
         rc = role_chunk()
