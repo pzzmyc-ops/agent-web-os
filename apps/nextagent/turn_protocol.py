@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable
 from . import session_log
 from .identity import current_user
 from .turn_event_bus import EventKind, TurnEvent, bus as event_bus
+from .upstreams.anthropic_codec import HIDDEN_THINKING
 
 SendFn = Callable[[dict], Awaitable[None]]
 
@@ -112,6 +113,7 @@ class TextBlocks:
         self._seg_reason = ""
         self._text_open = False
         self._think_open = False
+        self._think_placeholder_only = False
         self._text_seq = 1
         self._think_seq = 1
         self._notice_seq = 0
@@ -147,7 +149,22 @@ class TextBlocks:
         await self._em.turn("block_delta", {"blockId": self._text_bid, "target": "text", "text": delta})
 
     async def reasoning(self, delta: str) -> None:
-        await self._ensure_think()
+        if delta == HIDDEN_THINKING:
+            if self._think_open:
+                return
+            await self._ensure_think()
+            self._think_placeholder_only = True
+        elif self._think_open and self._think_placeholder_only:
+            await self._em.turn("block_remove", {"blockId": self._think_bid})
+            self._think_open = False
+            self._think_placeholder_only = False
+            if self.full_reason.endswith(HIDDEN_THINKING):
+                self.full_reason = self.full_reason[: -len(HIDDEN_THINKING)]
+            if self._seg_reason == HIDDEN_THINKING:
+                self._seg_reason = ""
+            await self._ensure_think()
+        else:
+            await self._ensure_think()
         self.full_reason += delta
         self._seg_reason += delta
         await self._em.turn("block_delta", {"blockId": self._think_bid, "target": "text", "text": delta})
@@ -161,6 +178,7 @@ class TextBlocks:
         if self._think_open:
             await self._em.turn("block_end", {"blockId": self._think_bid, "status": "done", "kind": "thinking"})
             self._think_open = False
+            self._think_placeholder_only = False
 
     async def persist_segment(self) -> None:
         """把已累积的这一段写成一条 assistant_message 事件。空段不写。

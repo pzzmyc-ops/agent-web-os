@@ -240,6 +240,11 @@ body {
   .chat-header-left,
     .chat-header-right {
       gap: 8px;
+      flex: 0 0 auto;
+    }
+  .mobile-chat-header .chat-header-left > *,
+    .mobile-chat-header .chat-header-right > * {
+      flex-shrink: 0;
     }
   .chat-header-left {
       justify-content: flex-start;

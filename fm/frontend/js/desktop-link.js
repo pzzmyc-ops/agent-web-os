@@ -51,7 +51,10 @@ const DesktopLink = {
       if (msg.type === "cmd") this.handle(msg);
       else if (msg.type === "fs_changed") this.fsChanged(msg);
       else if (msg.type === "evicted") this.onEvicted(msg);
-      else if (msg.type === "ready" && this._readyResolve) this._readyResolve();
+      else if (msg.type === "ready") {
+        if (this._readyResolve) this._readyResolve();
+        window.dispatchEvent(new CustomEvent("fm:desktop-ready"));
+      }
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;

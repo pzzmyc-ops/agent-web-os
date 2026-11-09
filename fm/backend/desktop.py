@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import time
@@ -42,6 +43,8 @@ from .pathutil import parent_of, resolve, to_fs
 CMD_TIMEOUT = 20.0
 
 router = APIRouter(prefix="/api/desktop")
+
+_log = logging.getLogger("fm.desktop")
 
 _loop: asyncio.AbstractEventLoop | None = None
 _active_id: str = ""
@@ -241,6 +244,27 @@ def exec_on_desktop(desktop_id: str, op: str, params: dict) -> dict:
     conn = _conn(desktop_id)
     fut = asyncio.run_coroutine_threadsafe(conn.call(op, params), _loop)
     return fut.result()
+
+
+async def _notify_all(op: str, params: dict) -> None:
+    for desktop_id, conn in list(_desktops.items()):
+        try:
+            await conn.call(op, params)
+        except Exception as exc:
+            _log.info("桌面 %s 执行 %s 未完成: %s", desktop_id, op, exc)
+
+
+def notify_desktops(op: str, params: dict) -> None:
+    if not _desktops or _loop is None:
+        return
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is _loop:
+        _loop.create_task(_notify_all(op, params))
+        return
+    asyncio.run_coroutine_threadsafe(_notify_all(op, params), _loop)
 
 
 def _is_share_page(path: str) -> bool:

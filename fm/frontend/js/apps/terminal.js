@@ -21,6 +21,23 @@ const FMTerminal = {
     return this.attach(data.id, data.path);
   },
 
+  async sync() {
+    const resp = await fetch("/api/terminal/active", { cache: "no-store" });
+    const body = await resp.text();
+    if (!resp.ok) throw new Error(body);
+    const data = JSON.parse(body);
+    const sessions = data.sessions || [];
+    const alive = new Set();
+    for (const session of sessions) {
+      alive.add("terminal:" + session.id);
+      await this.attach(session.id, session.path, true, true, session.label || "");
+    }
+    for (const id of Array.from(WM.windows.keys())) {
+      if (id.indexOf("terminal:") !== 0 || alive.has(id)) continue;
+      WM.close(id);
+    }
+  },
+
   async reattach(sessionId, folder) {
     const resp = await fetch("/api/terminal/active");
     const body = await resp.text();
@@ -144,6 +161,14 @@ const FMTerminal = {
     return win;
   },
 };
+
+window.addEventListener("fm:desktop-ready", () => {
+  FMTerminal.sync().catch((err) => toast("终端同步失败: " + (err.message || err)));
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  FMTerminal.sync().catch((err) => toast("终端同步失败: " + (err.message || err)));
+});
 
 kodApp.add({
   name: "terminal",

@@ -183,7 +183,6 @@ def terminal(
     if pty is False:
         return _fail("这个终端始终是系统终端")
     ctx = current_turn()
-    desktop_id = ctx.desktop_id if ctx is not None else ""
 
     note = ""
     patterns = watch_patterns
@@ -219,7 +218,7 @@ def terminal(
                 return _fail(str(exc))
             if not cwd.is_dir():
                 return _fail(f"workdir 不存在: {workdir or str(cwd)}")
-            session = open_on_desktop(str(cwd), desktop_id)
+            session = open_on_desktop(str(cwd))
 
         if mark == "有人":
             set_occupancy(session, "有人", session_key, _chat_name(ctx, session_key))
@@ -240,7 +239,7 @@ def terminal(
                 payload["note"] = note
             return payload
 
-        focus_session(session, desktop_id)
+        focus_session(session)
         session.submit_line(
             command,
             notify=bool(background and notify_on_complete),

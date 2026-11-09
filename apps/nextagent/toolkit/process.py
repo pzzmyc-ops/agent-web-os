@@ -63,7 +63,6 @@ def process(
     """
     session_id = str(session_id) if session_id else ""
     ctx = current_turn()
-    desktop_id = ctx.desktop_id if ctx is not None else ""
     from ..maf_tools.session_key import get_current_session_key
 
     chat_key = get_current_session_key(default="") or ""
@@ -81,7 +80,7 @@ def process(
     except KeyError:
         if action == "kill":
             try:
-                return close_session(session_id, desktop_id)
+                return close_session(session_id)
             except KeyError:
                 return {"status": "not_found", "error": f"No process with ID {session_id}"}
         return {"status": "not_found", "error": f"No process with ID {session_id}"}
@@ -139,16 +138,16 @@ def process(
                 who = session.owner or "别人"
                 return {"status": "error", "error": f"这个终端有人（{who}）"}
         if action == "kill":
-            return close_session(session_id, desktop_id)
+            return close_session(session_id)
         if action == "write":
-            focus_session(session, desktop_id)
+            focus_session(session)
             session.write_raw(str(data))
             return {"status": "ok", "bytes_written": len(str(data))}
         if action == "submit":
-            focus_session(session, desktop_id)
+            focus_session(session)
             session.submit_line(str(data))
             return {"status": "ok"}
-        focus_session(session, desktop_id)
+        focus_session(session)
         session.send_eot()
         return {"status": "ok", "message": "EOF sent"}
     except (RuntimeError, ValueError) as exc:

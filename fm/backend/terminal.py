@@ -604,6 +604,7 @@ class SessionRegistry:
                 "winId": session.win_id,
                 "sessionKey": session.session_key,
                 "owner": session.owner,
+                "label": window_label(session),
             })
         return rows
 
@@ -615,43 +616,10 @@ def _enqueue(loop, target, item) -> None:
     loop.call_soon_threadsafe(target.put_nowait, item)
 
 
-def online_desktop_ids() -> list[str]:
-    from .desktop import _online
+def _notify_desktop(op: str, params: dict) -> None:
+    from .desktop import notify_desktops
 
-    ids = []
-    for row in _online():
-        desktop_id = str(row.get("desktopId") or "").strip()
-        if desktop_id:
-            ids.append(desktop_id)
-    return ids
-
-
-def pick_desktop(preferred: str = "") -> str:
-    online = online_desktop_ids()
-    if not online:
-        raise RuntimeError("桌面页面没开着")
-    if len(online) == 1:
-        return online[0]
-    preferred = str(preferred or "").strip()
-    if preferred in online:
-        return preferred
-    raise RuntimeError("有多块在线桌面，不能确定操作哪一块")
-
-
-def _desktop_online(desktop_id: str) -> bool:
-    from .desktop import screen_online
-
-    return screen_online(desktop_id)
-
-
-def _desktop_call(desktop_id: str, op: str, params: dict) -> dict:
-    from .desktop import exec_on_desktop
-
-    return exec_on_desktop(desktop_id, op, params)
-
-
-def _window_missing(exc: Exception) -> bool:
-    return "不存在" in str(exc)
+    notify_desktops(op, params)
 
 
 def window_label(session: HostedSession) -> str:
@@ -690,90 +658,49 @@ def set_occupancy(session: HostedSession, mark: str, session_key: str, owner: st
 
 
 def push_label(session: HostedSession) -> None:
-    desktop_id = str(session.desktop_id or "").strip()
-    if not desktop_id or not _desktop_online(desktop_id):
-        return
-    try:
-        _desktop_call(desktop_id, "terminal.mark", {
-            "sessionId": session.id,
-            "label": window_label(session),
-        })
-    except Exception as exc:
-        if _window_missing(exc):
-            return
-        raise
+    _notify_desktop("terminal.mark", {
+        "sessionId": session.id,
+        "label": window_label(session),
+    })
 
 
-def open_on_desktop(path: str, desktop_id: str, session_key: str = "", owner: str = "") -> HostedSession:
-    desktop_id = pick_desktop(desktop_id)
-    if not _desktop_online(desktop_id):
-        raise RuntimeError(f"桌面 {desktop_id} 不在线")
+def open_on_desktop(path: str, desktop_id: str = "", session_key: str = "", owner: str = "") -> HostedSession:
     session = None
     try:
         session = REGISTRY.create(path, desktop_id=desktop_id, session_key=session_key, owner=owner)
         session.wait_ready(_READY_TIMEOUT)
-        _desktop_call(desktop_id, "terminal.open", {
-            "sessionId": session.id,
-            "path": session.path,
-            "label": window_label(session),
-        })
     except Exception:
         if session is not None:
-            sid = session.id
             try:
-                REGISTRY.close(sid)
+                REGISTRY.close(session.id)
             except KeyError:
                 pass
-            try:
-                _desktop_call(desktop_id, "terminal.close", {"sessionId": sid})
-            except Exception as close_exc:
-                if not _window_missing(close_exc):
-                    raise
         raise
+    _notify_desktop("terminal.open", {
+        "sessionId": session.id,
+        "path": session.path,
+        "label": window_label(session),
+    })
     return session
 
 
-def close_session(session_id: str, desktop_id: str) -> dict:
+def close_session(session_id: str) -> dict:
     try:
-        session = REGISTRY.get(session_id)
+        output = REGISTRY.close(session_id)
     except KeyError:
-        output = REGISTRY.closed_output.get(session_id)
-        if output is None:
+        saved = REGISTRY.closed_output.get(session_id)
+        if saved is None:
             raise KeyError(session_id)
-        return {"status": "already_closed", "output": output, "session_id": session_id}
-    output = session.visible_text()
-    try:
-        desktop_id = pick_desktop(desktop_id or session.desktop_id)
-    except RuntimeError:
-        if not online_desktop_ids():
-            REGISTRY.close(session_id)
-        raise
-    if not _desktop_online(desktop_id):
-        REGISTRY.close(session_id)
-        raise RuntimeError(f"桌面 {desktop_id} 不在线，会话已停")
-    try:
-        _desktop_call(desktop_id, "terminal.close", {"sessionId": session_id})
-    except Exception as exc:
-        if not _window_missing(exc):
-            raise
-        if REGISTRY.has(session_id):
-            REGISTRY.close(session_id)
-        saved = REGISTRY.closed_output.get(session_id, output)
         return {"status": "already_closed", "output": saved, "session_id": session_id}
-    if REGISTRY.has(session_id):
-        REGISTRY.close(session_id)
-    saved = REGISTRY.closed_output.get(session_id, output)
-    return {"status": "closed", "output": saved, "session_id": session_id}
+    _notify_desktop("terminal.close", {"sessionId": session_id})
+    return {"status": "closed", "output": output, "session_id": session_id}
 
 
-def focus_session(session: HostedSession, desktop_id: str = "") -> None:
-    target = pick_desktop(desktop_id or session.desktop_id)
-    if not _desktop_online(target):
-        raise RuntimeError(f"桌面 {target} 不在线")
-    session.desktop_id = target
-    _desktop_call(target, "terminal.open", {
+def focus_session(session: HostedSession) -> None:
+    _notify_desktop("terminal.open", {
         "sessionId": session.id,
         "path": session.path,
+        "label": window_label(session),
     })
 
 
