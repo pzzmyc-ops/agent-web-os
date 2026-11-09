@@ -33,11 +33,16 @@ def load_chat_models() -> list[dict]:
 
 
 def resolve_default_chat_model(preferred: str = "") -> tuple[str, list[str]]:
-    ids = [str(item.get("id") or "").strip() for item in load_chat_models()]
+    rows = load_chat_models()
+    ids = [str(item.get("id") or "").strip() for item in rows]
     ids = [item for item in ids if item]
     want = (preferred or "").strip()
     if want and want in ids:
         return want, ids
+    if want:
+        owners = [str(item.get("id") or "").strip() for item in rows if str(item.get("model") or "") == want]
+        if len(owners) == 1:
+            return owners[0], ids
     if ids:
         return ids[0], ids
     return "", []

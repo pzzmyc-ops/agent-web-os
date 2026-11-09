@@ -196,7 +196,8 @@ def _upstream_providers() -> tuple[str, str, list[dict]]:
             "api_mode": _API_MODES[modes.pop()],
             "discover_models": False,
         })
-    return default, resolve_model(default).name, entries
+    upstream, target = resolve_model(default)
+    return target, upstream.name, entries
 
 
 def _apply_workspace(home: Path, workspace: str) -> None:

@@ -180,7 +180,6 @@ def normalize_upstreams(raw) -> list[dict]:
         raise RuntimeError("upstreams 必须是数组")
     out: list[dict] = []
     names: set[str] = set()
-    models_seen: dict[str, str] = {}
     for i, item in enumerate(raw):
         where = f"upstreams[{i}]"
         if not isinstance(item, dict):
@@ -208,10 +207,6 @@ def normalize_upstreams(raw) -> list[dict]:
                 continue
             if mid in models:
                 continue
-            owner = models_seen.get(mid)
-            if owner is not None and owner != name:
-                raise RuntimeError(where + f" 模型 {mid} 已在上游 {owner} 里登记,模型名不能跨上游重复")
-            models_seen[mid] = name
             models.append(mid)
         if not models:
             raise RuntimeError(where + " 至少要填一个模型")

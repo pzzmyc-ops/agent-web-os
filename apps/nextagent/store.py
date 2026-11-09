@@ -801,7 +801,13 @@ class Store:
             self._touch_thread(thread_id)
 
     def load_session_ui(self, thread_id: str) -> dict:
-        return dict(self._session_state(thread_id)[0])
+        from .config import resolve_default_chat_model
+
+        ui = dict(self._session_state(thread_id)[0])
+        mid = str(ui.get("agentProfile") or "").strip()
+        if mid:
+            ui["agentProfile"] = resolve_default_chat_model(mid)[0]
+        return ui
 
     def agent_speak_on(self, thread_id: str) -> bool:
         return self.load_session_ui(thread_id).get("agentSpeak", True) is not False
@@ -829,11 +835,7 @@ class Store:
     def selected_chat_model(self, thread_id: str) -> str:
         from .config import resolve_default_chat_model
 
-        mid = str(self.load_session_ui(thread_id).get("agentProfile") or "").strip()
-        resolved = resolve_default_chat_model(mid)[0]
-        if resolved != mid:
-            self.apply_selected_chat_model(thread_id, resolved)
-        return resolved
+        return resolve_default_chat_model(str(self.load_session_ui(thread_id).get("agentProfile") or ""))[0]
 
     def apply_selected_chat_model(self, thread_id: str, model: str) -> None:
         from .config import resolve_default_chat_model

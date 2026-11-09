@@ -70,13 +70,24 @@ def _model_ui() -> dict[str, Any]:
     }
 
 
+def model_id(upstream_name: str, model: str) -> str:
+    return upstream_name + "/" + model
+
+
+def _display_name(u: Upstream, model: str) -> str:
+    if len(u.models) == 1:
+        return u.name
+    return u.name + " · " + model
+
+
 def model_catalog() -> list[dict]:
     out: list[dict] = []
     for u in load_upstreams():
         for mid in u.models:
             out.append({
-                "id": mid,
-                "displayName": mid,
+                "id": model_id(u.name, mid),
+                "displayName": _display_name(u, mid),
+                "model": mid,
                 "provider": u.name,
                 "media_caps": {},
                 "context_window": None,
@@ -86,11 +97,12 @@ def model_catalog() -> list[dict]:
     return out
 
 
-def resolve_model(model: str) -> Upstream:
+def resolve_model(model: str) -> tuple[Upstream, str]:
     mid = str(model or "").strip()
     if not mid:
         raise RuntimeError("模型名为空")
     for u in load_upstreams():
-        if mid in u.models:
-            return u
+        for m in u.models:
+            if model_id(u.name, m) == mid:
+                return u, m
     raise RuntimeError("模型 " + mid + " 不在任何上游接口的模型列表里,请到「上游接口」里添加")

@@ -295,7 +295,8 @@ def _upstream_settings() -> tuple[str, str, dict, dict]:
             "models": [{"id": m, "name": m} for m in u.models],
         }
         creds[cred] = u.api_key or "local"
-    return default, resolve_model(default).name, providers, creds
+    upstream, target = resolve_model(default)
+    return target, upstream.name, providers, creds
 
 
 def _adapt_skill_md(name: str, text: str, dest: Path, gateway_base: str, python: str, key: str) -> str:

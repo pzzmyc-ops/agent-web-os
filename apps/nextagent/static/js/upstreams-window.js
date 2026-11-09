@@ -102,7 +102,7 @@ function formHtml() {
   var d = _draft;
   return '<div class="ups-form">'
     + '<div class="ctxwin-label">' + (_editing >= 0 ? "编辑上游接口" : "新增上游接口") + "</div>"
-    + field("upsName", "名称", d.name, "随便起,比如 deepseek / openrouter / 公司网关")
+    + field("upsName", "名称（对话里显示的模型名）", d.name, "比如 deepseek / claude fable 5 / 公司网关")
     + field("upsBase", "接口地址（base_url）", d.base_url, "例如 https://api.deepseek.com/v1 或 https://api.anthropic.com")
     + field("upsKey", "API Key", d.api_key, "没有鉴权的本地服务可留空")
     + field("upsModels", "模型名（一行一个）", d.models, "例如 deepseek-chat\ndeepseek-reasoner", true)
@@ -121,7 +121,7 @@ function render() {
   if (!body) return;
   body.innerHTML =
     '<div class="ctxwin">'
-    + '<p class="ctxwin-hint">这里登记的接口就是对话可选的模型来源。协议不用选:程序按接口地址和模型名自动判断是 OpenAI chat、OpenAI Responses 还是 Anthropic Messages,判错时会自动换另一种协议重试并记住结果。模型名在所有上游之间不能重复。</p>'
+    + '<p class="ctxwin-hint">这里登记的接口就是对话可选的模型来源。协议不用选:程序按接口地址和模型名自动判断是 OpenAI chat、OpenAI Responses 还是 Anthropic Messages,判错时会自动换另一种协议重试并记住结果。「名称」就是对话里显示的模型名；同一个模型名可以在多个上游各登记一次,按名称区分。</p>'
     + '<div class="rtv-sources">' + listHtml() + "</div>"
     + (_draft ? formHtml() : "")
     + '<p id="upsWinError" class="ctxwin-error"' + (_error ? "" : " hidden") + ">" + escapeText(_error) + "</p>"

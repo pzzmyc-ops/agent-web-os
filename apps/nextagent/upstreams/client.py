@@ -45,7 +45,7 @@ class UpstreamChatClient(MafChatClient):
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         body = self._request_body(messages, options)
         try:
-            upstream = resolve_model(body["model"])
+            upstream, body["model"] = resolve_model(body["model"])
         except RuntimeError as ex:
             raise ChatClientException(str(ex), inner_exception=ex) from ex
 
