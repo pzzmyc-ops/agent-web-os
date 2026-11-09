@@ -159,6 +159,7 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
     role_sent = False
     rows: dict[int, dict[str, Any]] = {}
     item_to_idx: dict[str, int] = {}
+    sent_call_ids: set[str] = set()
 
     def role_chunk():
         nonlocal role_sent
@@ -175,7 +176,14 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
         if key:
             item_to_idx[key] = idx
         if idx not in rows:
-            rows[idx] = {"id": "", "name": "", "arguments": "", "announced": False, "args_sent": False}
+            rows[idx] = {
+                "id": "",
+                "name": "",
+                "arguments": "",
+                "deltas": "",
+                "announced": False,
+                "args_sent": False,
+            }
         return idx
 
     def apply_item(idx: int, item: dict) -> None:
@@ -193,14 +201,20 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
         if args:
             rows[idx]["arguments"] = _argument_text(args)
 
-    def emit_call(idx: int):
+    def emit_call(idx: int, *, final: bool):
         row = rows[idx]
         if row["args_sent"]:
             return flush_row(idx, "")
-        piece = row["arguments"]
+        piece = ""
+        if final:
+            piece = row["arguments"] or _argument_text(row["deltas"])
+            if piece and row["id"] and row["id"] in sent_call_ids:
+                piece = ""
         chunk = flush_row(idx, piece)
         if chunk is not None and piece:
             row["args_sent"] = True
+            if row["id"]:
+                sent_call_ids.add(row["id"])
         return chunk
 
     def flush_row(idx: int, piece: str):
@@ -241,7 +255,7 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
                 rc = role_chunk()
                 if rc:
                     yield rc
-                ch = emit_call(idx)
+                ch = emit_call(idx, final=True)
                 if ch:
                     yield ch
             rc = role_chunk()
@@ -260,11 +274,12 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
             if item.get("type") == "function_call":
                 idx = idx_for(ev.get("output_index"), item.get("id"))
                 apply_item(idx, item)
-                tool_chunk = emit_call(idx)
-        elif kind in (
-            "response.function_call_arguments.delta",
-            "response.function_call_arguments.done",
-        ):
+                tool_chunk = emit_call(idx, final=False)
+        elif kind == "response.function_call_arguments.delta":
+            idx = idx_for(ev.get("output_index"), ev.get("item_id"))
+            rows[idx]["deltas"] += str(ev.get("delta") or "")
+            continue
+        elif kind == "response.function_call_arguments.done":
             continue
         elif kind == "response.output_item.done":
             item = ev.get("item") or {}
@@ -272,7 +287,7 @@ async def decode(lines: AsyncIterator[str], model: str) -> AsyncIterator[dict]:
                 idx = idx_for(ev.get("output_index"), item.get("id"))
                 apply_item(idx, item)
                 set_arguments(idx, item)
-                tool_chunk = emit_call(idx)
+                tool_chunk = emit_call(idx, final=True)
         else:
             continue
         rc = role_chunk()
